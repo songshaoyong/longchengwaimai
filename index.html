@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>龙城外卖 · Dragon City Express</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect rx='12' width='64' height='64' fill='%23ff2d95'/><text x='32' y='44' text-anchor='middle' font-size='36' fill='white'>龙</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene" tabindex="0"></canvas>
+
+      <div id="hud" class="hidden">
+        <div class="top-left">
+          <div class="brand">
+            <span class="logo">龙</span>
+            <div>
+              <div class="title">龙城外卖</div>
+              <div class="sub" id="district-label">1区 · 老街坊</div>
+            </div>
+          </div>
+          <div class="stat-row">
+            <div class="stat"><span>余额</span><b id="money">¥0</b></div>
+            <div class="stat"><span>完成单</span><b id="deliveries">0</b></div>
+            <div class="stat"><span id="rank-name">新手骑手</span><b id="rank-progress">0 / 8</b></div>
+          </div>
+        </div>
+
+        <div class="top-center">
+          <div id="nav-banner">
+            <div id="nav-icon">↱</div>
+            <div class="nav-copy">
+              <div id="nav-dist">--</div>
+              <div id="nav-action">正在规划路线…</div>
+            </div>
+          </div>
+          <div id="clock-row"><span id="clock">19:40</span> · <span id="weather-label">晴 · 夜</span></div>
+        </div>
+
+        <div class="top-right">
+          <canvas id="minimap" width="260" height="280"></canvas>
+        </div>
+
+        <div class="bottom-left">
+          <div class="meter">
+            <label>电量</label>
+            <div class="bar"><i id="battery-bar"></i></div>
+          </div>
+          <div class="meter">
+            <label>体力</label>
+            <div class="bar stamina"><i id="stamina-bar"></i></div>
+          </div>
+          <div class="meter hidden" id="bump-meter">
+            <label>颠簸</label>
+            <div class="bar danger"><i id="bump-bar"></i></div>
+          </div>
+          <div class="meter hidden" id="temp-meter">
+            <label>温度</label>
+            <div class="bar temp"><i id="temp-bar"></i></div>
+          </div>
+          <div class="speed">
+            <b id="speed">0</b>
+            <span>km/h</span>
+          </div>
+        </div>
+
+        <div id="prompt" class="hidden"></div>
+        <div id="combo" class="hidden">连击 <b>x0</b></div>
+        <div id="hurt"></div>
+        <div id="controls-hint">接单后先取餐，再去送达　1 / 2 / 3 接单　A/D 左右　空格跳　S 滑铲</div>
+        <div id="toast"></div>
+      </div>
+
+      <div id="phone" class="hidden">
+        <div class="phone-notch"></div>
+        <div class="phone-app">
+          <header>
+            <span>龙城外卖</span>
+            <small id="phone-status">在线</small>
+          </header>
+          <section id="active-order" class="empty">暂无进行中的订单</section>
+          <section id="chat"></section>
+          <section id="offers"></section>
+        </div>
+      </div>
+
+      <div id="title-screen">
+        <div class="title-bg"></div>
+        <div class="title-card">
+          <p class="eyebrow">2040 · 龙城</p>
+          <h1>龙城外卖</h1>
+          <p class="en">DRAGON CITY EXPRESS</p>
+          <p class="pitch">白天送热饭，夜里送霓虹。接哪一单由你选，车自己拐弯，你负责把人等到的那口热气送到。</p>
+          <p class="version">正式开发 · 第一期 · 1区老街坊</p>
+          <label class="name-field">
+            骑手名字
+            <input id="player-name" maxlength="8" value="阿龙" />
+          </label>
+          <button id="continue-btn" class="hidden" type="button">继续跑单</button>
+          <button id="start-btn" type="button">新游戏</button>
+          <p class="hints">
+            A/D 左右 · 空格跳 · S 滑铲 · 手机 1/2/3 接单
+          </p>
+        </div>
+      </div>
+
+      <div id="dialogue" class="hidden">
+        <div class="portrait" id="dlg-who">老马</div>
+        <p id="dlg-text"></p>
+        <button id="dlg-next" type="button">继续</button>
+      </div>
+
+      <div id="result" class="hidden">
+        <h2>送达结算</h2>
+        <div id="stars"></div>
+        <ul id="result-lines"></ul>
+        <div class="pay" id="result-pay"></div>
+        <button id="result-ok" type="button">继续跑单</button>
+      </div>
+
+      <div id="pause" class="hidden">
+        <h2>暂停</h2>
+        <p>进度已自动保存。ESC 继续。</p>
+        <button id="resume-btn" type="button">回到龙城</button>
+        <button id="mute-btn" class="ghost" type="button">静音</button>
+        <button id="title-btn" class="ghost" type="button">返回标题</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
