@@ -13,8 +13,9 @@ import { Input } from "./input";
 import { OrderSystem } from "./orders";
 import { buildLeg } from "./path";
 import { clearSave, defaultSave, loadSave, snapshot, writeSave } from "./save";
-import { paintSky, makeSkyTexture } from "./textures";
+import { paintSky, makeSkyTexture, makeCloudTexture } from "./textures";
 import { duskFactor, nightFactor, periodName } from "./period";
+import { Particles } from "./particles";
 import type { GameMode, PlayerStats } from "./types";
 
 export class Game {
@@ -26,6 +27,8 @@ export class Game {
   private clock = new THREE.Clock();
   private sky: THREE.Mesh;
   private skyTex: THREE.CanvasTexture;
+  private clouds: THREE.Mesh;
+  private cloudMat: THREE.MeshBasicMaterial;
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
   private neonM: THREE.PointLight;
@@ -41,6 +44,7 @@ export class Game {
   private rider = new Rider();
   private orders: OrderSystem;
   private hud = new Hud();
+  private particles = new Particles();
   private mode: GameMode = "title";
   private holding = false;
   private raining = false;
@@ -99,6 +103,21 @@ export class Game {
     this.sky.position.set(CITY_SPAN / 2, 0, CITY_SPAN / 2);
     this.scene.add(this.sky);
 
+    // 云层:第二层半球,贴 noise 软白团,缓慢旋转
+    this.cloudMat = new THREE.MeshBasicMaterial({
+      map: makeCloudTexture(),
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1080, 24, 16), this.cloudMat);
+    this.clouds.position.set(CITY_SPAN / 2, 0, CITY_SPAN / 2);
+    this.scene.add(this.clouds);
+
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.42, 0.62);
@@ -107,6 +126,7 @@ export class Game {
 
     this.scene.add(this.track.group);
     this.scene.add(this.rider.group);
+    this.scene.add(this.particles.group);
     const boot = this.track.planTo({ i: 4, j: 1 }, { i: 4, j: 8 }, null, 0.4);
     this.rider.setRoute(boot);
 
@@ -309,9 +329,11 @@ export class Game {
     this.audio.success();
     const lines = CUSTOMER_LINES[result.customer];
     const quote = lines ? lines[Math.floor(Math.random() * lines.length)] : null;
-    this.hud.showResult(result.stars, result.lines, result.pay);
+    this.hud.showResult(result.stars, result.lines, result.pay, result.customer);
     this.resultT = 2.6;
     this.hud.toastMsg(quote ? `${result.customer}：${quote}` : `${"★".repeat(result.stars)}  +¥${result.pay}`);
+    // 送达礼花
+    this.particles.coin(this.rider.x, 1.4, this.rider.z);
     this.persist();
   }
 
@@ -355,6 +377,11 @@ export class Game {
       this.stats.combo = 0;
       this.hud.hurt();
       this.hud.toastMsg("撞上了！餐品颠簸");
+      // 碰撞火花
+      const sm = this.rider.sample();
+      const sx = this.rider.x + (sm?.rx ?? 1) * obs.lateral;
+      const sz = this.rider.z + (sm?.rz ?? 0) * obs.lateral;
+      this.particles.spark(sx, 0.6, sz);
     }
 
     for (const g of this.track.gates) {
@@ -476,9 +503,11 @@ export class Game {
       if (this.mode === "playing") this.hud.toastMsg(this.raining ? "下雨了，路滑减速" : "雨停了");
     }
     this.applyAtmosphere();
+    this.track.setWet(this.raining ? 1 : 0);
     this.tickRain(dt);
     this.track.update(dt);
     this.tickSpeedLines();
+    this.particles.update(dt);
 
     if (this.resultT > 0) {
       this.resultT -= dt;
@@ -496,6 +525,13 @@ export class Game {
       const heavy = Boolean(this.holding && this.orders.active?.kind === "heavy");
       this.rider.update(dt, this.input, this.stats, heavy, this.raining, idle);
       this.track.updateRibbon(this.rider.s);
+      // 落地尘土 + 漂移烟
+      if (this.rider.consumeLanding()) {
+        this.particles.dust(this.rider.x, 0.1, this.rider.z);
+      }
+      if (this.rider.speed > 18 && Math.abs(this.input.axis().x) > 0.6 && !this.rider.jumping) {
+        if (Math.random() < 0.4) this.particles.smoke(this.rider.x, 0.2, this.rider.z);
+      }
       if (!idle) {
         this.tickOrderBeats();
         this.collide();
@@ -525,6 +561,9 @@ export class Game {
       this.rider.followCamera(this.camera, dt);
       this.sky.position.x = this.camera.position.x;
       this.sky.position.z = this.camera.position.z;
+      this.clouds.position.x = this.camera.position.x;
+      this.clouds.position.z = this.camera.position.z;
+      this.clouds.rotation.y += dt * 0.008;
     }
     this.audio.engine(this.mode === "playing" ? this.rider.speed : 0);
     this.hud.setClock(this.minutes, this.raining);
@@ -618,6 +657,9 @@ export class Game {
       this.lastSkyH = hour;
       this.lastSkyRain = this.raining;
     }
+    // 云层:白天显眼,夜晚淡化,雨天加浓
+    const cloudOpacity = (0.55 * day + 0.08 * night) * (this.raining ? 1.4 : 1);
+    this.cloudMat.opacity = Math.min(0.7, cloudOpacity);
 
     if (name !== this.lastPeriod) {
       if (this.lastPeriod && this.mode === "playing") {

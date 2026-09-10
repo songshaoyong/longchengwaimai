@@ -3,6 +3,7 @@ import type { Track } from "./city";
 import { nodePos } from "./path";
 import { kindLabel, type OrderSystem } from "./orders";
 import { periodName } from "./period";
+import { makeNpcTexture, NPC_NAME_TO_ID } from "./portraits";
 import type { Order, PlayerStats } from "./types";
 import type { Rider } from "./bike";
 
@@ -37,6 +38,9 @@ export class Hud {
   private resultPay = el<HTMLElement>("result-pay");
   private dlgWho = el<HTMLElement>("dlg-who");
   private dlgText = el<HTMLElement>("dlg-text");
+  private dlgPortrait = el<HTMLImageElement>("dlg-portrait");
+  private resultPortrait = el<HTMLImageElement>("result-portrait");
+  private portraitCache: Record<string, string> = {};
   private combo = el<HTMLElement>("combo");
   private deliveries = el<HTMLElement>("deliveries");
   private map = el<HTMLCanvasElement>("minimap");
@@ -188,13 +192,32 @@ export class Hud {
     this.show("dialogue", true);
     this.dlgWho.textContent = who;
     this.dlgText.textContent = text;
+    this.setPortrait(this.dlgPortrait, who);
   }
 
-  showResult(stars: number, lines: string[], pay: number) {
+  showResult(stars: number, lines: string[], pay: number, customer?: string) {
     this.show("result", true);
     this.stars.textContent = "★".repeat(stars) + "☆".repeat(5 - stars);
     this.resultLines.innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
     this.resultPay.textContent = pay > 0 ? `+ ¥${pay}` : "未入账";
+    this.setPortrait(this.resultPortrait, customer ?? "");
+  }
+
+  private setPortrait(img: HTMLImageElement, name: string) {
+    const id = NPC_NAME_TO_ID[name];
+    if (!id) {
+      img.classList.add("hidden");
+      img.src = "";
+      return;
+    }
+    if (!this.portraitCache[id]) {
+      const tex = makeNpcTexture(id);
+      // CanvasTexture 转 dataURL
+      const c = tex.image as HTMLCanvasElement;
+      this.portraitCache[id] = c.toDataURL();
+    }
+    img.src = this.portraitCache[id]!;
+    img.classList.remove("hidden");
   }
 
   drawGps(track: Track, rider: Rider, holding: boolean) {

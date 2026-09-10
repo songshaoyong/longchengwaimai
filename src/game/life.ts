@@ -15,6 +15,12 @@ export class CityLife {
   private cars: Mover[] = [];
   private peds: Mover[] = [];
   private rng = mulberry32(77);
+  // 夜间车灯拉成长曝光线
+  private headTrails: THREE.Mesh[] = [];
+  private tailTrails: THREE.Mesh[] = [];
+  private headTrailMat: THREE.MeshBasicMaterial;
+  private tailTrailMat: THREE.MeshBasicMaterial;
+  private night = 0;
 
   constructor() {
     const carMats = [0xff3355, 0x33ddff, 0xffcc33, 0x7aa0c8, 0xf2f2f2, 0x2a2a32].map(
@@ -30,6 +36,24 @@ export class CityLife {
     const head = new THREE.MeshStandardMaterial({ color: 0xfff2c8, emissive: 0xffe9a0, emissiveIntensity: 2.1 });
     const tail = new THREE.MeshStandardMaterial({ color: 0xff2244, emissive: 0xff2244, emissiveIntensity: 1.5 });
 
+    // 长曝光线材质(顶/尾灯)
+    this.headTrailMat = new THREE.MeshBasicMaterial({
+      color: 0xfff0a0,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    this.tailTrailMat = new THREE.MeshBasicMaterial({
+      color: 0xff2244,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+
     for (let j = 0; j < GRID_N; j++) {
       const n = 1 + (this.rng() > 0.4 ? 1 : 0);
       for (let k = 0; k < n; k++) {
@@ -40,7 +64,9 @@ export class CityLife {
         mesh.position.set(x, 0, z);
         mesh.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
         this.group.add(mesh);
-        this.cars.push({ mesh, axis: "x", dir, speed: 7 + this.rng() * 6, lane: z });
+        const mover = { mesh, axis: "x" as const, dir, speed: 7 + this.rng() * 6, lane: z };
+        this.cars.push(mover);
+        this.addTrails(mesh, "x", dir);
       }
     }
     for (let i = 0; i < GRID_N; i++) {
@@ -53,7 +79,9 @@ export class CityLife {
         mesh.position.set(x, 0, z);
         mesh.rotation.y = dir > 0 ? 0 : Math.PI;
         this.group.add(mesh);
-        this.cars.push({ mesh, axis: "z", dir, speed: 7 + this.rng() * 6, lane: x });
+        const mover = { mesh, axis: "z" as const, dir, speed: 7 + this.rng() * 6, lane: x };
+        this.cars.push(mover);
+        this.addTrails(mesh, "z", dir);
       }
     }
 
@@ -83,6 +111,46 @@ export class CityLife {
       }
       this.group.add(g);
     }
+  }
+
+  private addTrails(car: THREE.Group, axis: "x" | "z", dir: number) {
+    // 顶灯长尾:在车前方延伸的薄片
+    const headGeo = new THREE.PlaneGeometry(0.5, 4);
+    const headTrail = new THREE.Mesh(headGeo, this.headTrailMat);
+    headTrail.visible = false;
+    // 尾灯长尾:在车后方延伸
+    const tailGeo = new THREE.PlaneGeometry(0.4, 3);
+    const tailTrail = new THREE.Mesh(tailGeo, this.tailTrailMat);
+    tailTrail.visible = false;
+
+    if (axis === "x") {
+      // 沿 X 轴移动
+      headTrail.rotation.x = -Math.PI / 2;
+      headTrail.rotation.z = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      tailTrail.rotation.x = -Math.PI / 2;
+      tailTrail.rotation.z = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      // 位置:车前方/后方
+      headTrail.position.set(dir * 2.5, 0.55, 0);
+      tailTrail.position.set(-dir * 2.5, 0.55, 0);
+    } else {
+      headTrail.rotation.x = -Math.PI / 2;
+      tailTrail.rotation.x = -Math.PI / 2;
+      headTrail.position.set(0, 0.55, dir * 2.5);
+      tailTrail.position.set(0, 0.55, -dir * 2.5);
+    }
+    car.add(headTrail, tailTrail);
+    this.headTrails.push(headTrail);
+    this.tailTrails.push(tailTrail);
+  }
+
+  setPeriod(night: number) {
+    this.night = night;
+    const op = night * 0.55;
+    this.headTrailMat.opacity = op;
+    this.tailTrailMat.opacity = op;
+    const visible = night > 0.3;
+    for (const t of this.headTrails) t.visible = visible;
+    for (const t of this.tailTrails) t.visible = visible;
   }
 
   update(dt: number) {

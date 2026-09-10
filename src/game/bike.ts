@@ -21,101 +21,239 @@ export class Rider {
   shake = 0;
   firstPerson = false;
   route: Route | null = null;
-  private wheels: THREE.Mesh[] = [];
+
+  // 摔车状态:0=正常,>0=倒地中(秒)
+  crashT = 0;
+  // 货箱晃动
+  private boxWobble = 0;
+  private boxTilt = 0;
+  // 转向手把 IK
+  private steerAngle = 0;
+  // 上次落地检测
+  private wasGrounded = true;
+
   private body: THREE.Group;
+  private cargoGroup: THREE.Group;
+  private handlebar: THREE.Group;
+  private wheels: THREE.Mesh[] = [];
+  private wheelSpin = [0, 0];
+  private lamp: THREE.SpotLight;
+  private headMesh: THREE.Object3D;
+  private visorMat: THREE.MeshStandardMaterial;
+  private lampMat: THREE.MeshStandardMaterial;
   private lateralV = 0;
 
   constructor() {
     this.body = new THREE.Group();
     this.group.add(this.body);
 
-    const paint = new THREE.MeshStandardMaterial({ color: 0x1c2430, metalness: 0.55, roughness: 0.28 });
+    // ===== 统一 LowPoly 赛博中国风:硬边几何 + 少量多边形 + 强 emissive 点缀 =====
+
+    // 调色板:深青底色 + 橙红品牌色 + 青色发光带 + 深灰金属件
+    const paint = new THREE.MeshStandardMaterial({ color: 0x0f1622, metalness: 0.65, roughness: 0.32 });
     const orange = new THREE.MeshStandardMaterial({
       color: 0xff6a1a,
       emissive: 0x4a1600,
-      emissiveIntensity: 0.45,
+      emissiveIntensity: 0.55,
+      roughness: 0.4,
     });
-    const jacket = new THREE.MeshStandardMaterial({ color: 0xff7a28, roughness: 0.55 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x11161c, roughness: 0.35, metalness: 0.4 });
+    const orangeBright = new THREE.MeshStandardMaterial({
+      color: 0xff8a3a,
+      emissive: 0xff6a1a,
+      emissiveIntensity: 0.9,
+      roughness: 0.35,
+    });
+    const jacket = new THREE.MeshStandardMaterial({ color: 0xff7a28, roughness: 0.62 });
+    const jacketTrim = new THREE.MeshStandardMaterial({
+      color: 0x3df0ff,
+      emissive: 0x3df0ff,
+      emissiveIntensity: 1.6,
+      roughness: 0.4,
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x0a0e16, roughness: 0.35, metalness: 0.5 });
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.65, metalness: 0.15 });
+    const rimMat = new THREE.MeshStandardMaterial({
+      color: 0x6a7a8a,
+      metalness: 0.85,
+      roughness: 0.2,
+      emissive: 0x1a2030,
+      emissiveIntensity: 0.3,
+    });
 
-    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 2.15), paint);
-    deck.position.y = 0.52;
+    // === 车身(电动车) ===
+    // 踏板底座:扁平硬边
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.1, 2.0), paint);
+    deck.position.y = 0.42;
     this.body.add(deck);
 
-    const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.28, 1.35), paint);
-    chassis.position.set(0, 0.72, 0.12);
+    // 车架:前后斜面拼成硬边轮廓
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.24, 1.25), paint);
+    chassis.position.set(0, 0.66, 0.1);
     this.body.add(chassis);
 
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.85, 8), dark);
-    bar.rotation.z = Math.PI / 2;
-    bar.position.set(0, 1.12, 0.72);
-    this.body.add(bar);
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.45, 6), dark);
-    stem.position.set(0, 0.92, 0.55);
-    this.body.add(stem);
+    // 车头柱(转向柱,可转动)
+    this.handlebar = new THREE.Group();
+    this.handlebar.position.set(0, 0.92, 0.55);
+    this.body.add(this.handlebar);
 
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.78, 0.78), orange);
-    box.position.set(0, 1.12, -0.78);
-    this.body.add(box);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 6), dark);
+    stem.position.y = 0.2;
+    this.handlebar.add(stem);
+
+    // 手把:横杆 + 两端握把
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.78, 6), dark);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.y = 0.42;
+    this.handlebar.add(bar);
+
+    const gripL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.12, 8), orangeBright);
+    gripL.rotation.z = Math.PI / 2;
+    gripL.position.set(-0.4, 0.42, 0);
+    this.handlebar.add(gripL);
+    const gripR = gripL.clone();
+    gripR.position.x = 0.4;
+    this.handlebar.add(gripR);
+
+    // === 货箱(可晃动) ===
+    this.cargoGroup = new THREE.Group();
+    this.cargoGroup.position.set(0, 1.1, -0.78);
+    this.body.add(this.cargoGroup);
+
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.72, 0.72), orange);
+    box.position.y = 0;
+    this.cargoGroup.add(box);
+
+    // 货箱边角发光条(LowPoly 风格的视觉点)
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.92, 0.04, 0.76),
+      jacketTrim,
+    );
+    trim.position.y = 0.35;
+    this.cargoGroup.add(trim);
+    const trimB = trim.clone();
+    trimB.position.y = -0.35;
+    this.cargoGroup.add(trimB);
+
+    // 货箱 Logo(背面)
     const logo = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.55, 0.55),
+      new THREE.PlaneGeometry(0.5, 0.5),
       new THREE.MeshBasicMaterial({ map: makeLogoTexture(), toneMapped: false }),
     );
-    logo.position.set(0, 1.12, -1.18);
+    logo.position.set(0, 0, -0.37);
     logo.rotation.y = Math.PI;
-    this.body.add(logo);
+    this.cargoGroup.add(logo);
 
-    const rider = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.58, 4, 8), jacket);
-    rider.position.set(0, 1.38, 0.12);
-    this.body.add(rider);
-    const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.32, 3, 6), jacket);
-    armL.position.set(-0.28, 1.28, 0.38);
-    armL.rotation.x = -0.7;
+    // 货箱封带
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.78, 0.04), dark);
+    this.cargoGroup.add(strap);
+
+    // === 骑手 ===
+    // 身体:胶囊,加青色腰条
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 0.5, 4, 8), jacket);
+    torso.position.set(0, 1.32, 0.1);
+    this.body.add(torso);
+
+    const belt = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.04, 0.42),
+      jacketTrim,
+    );
+    belt.position.set(0, 1.04, 0.1);
+    this.body.add(belt);
+
+    // 手臂:IK 简化,朝前伸(抓车把)
+    const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.3, 3, 6), jacket);
+    armL.position.set(-0.26, 1.28, 0.36);
+    armL.rotation.x = -0.8;
     this.body.add(armL);
     const armR = armL.clone();
-    armR.position.x = 0.28;
+    armR.position.x = 0.26;
     this.body.add(armR);
 
-    const helm = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8), dark);
-    helm.position.set(0, 1.92, 0.18);
-    this.body.add(helm);
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 0.12, 0.08),
-      new THREE.MeshStandardMaterial({ color: 0x3df0ff, emissive: 0x3df0ff, emissiveIntensity: 1.3 }),
-    );
-    visor.position.set(0, 1.9, 0.36);
-    this.body.add(visor);
+    // 头部:球 + 头盔檐 + 面罩
+    this.headMesh = new THREE.Group();
+    this.headMesh.position.set(0, 1.92, 0.18);
+    this.body.add(this.headMesh);
 
-    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.14, 14);
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.55 });
-    const rimMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.7, roughness: 0.25 });
-    for (const zOff of [0.78, -0.72]) {
+    const helm = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), dark);
+    this.headMesh.add(helm);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.04, 0.16), dark);
+    brim.position.set(0, 0.04, 0.18);
+    this.headMesh.add(brim);
+
+    this.visorMat = new THREE.MeshStandardMaterial({
+      color: 0x3df0ff,
+      emissive: 0x3df0ff,
+      emissiveIntensity: 1.5,
+      roughness: 0.2,
+      metalness: 0.5,
+    });
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.1, 0.06), this.visorMat);
+    visor.position.set(0, -0.02, 0.22);
+    this.headMesh.add(visor);
+
+    // === 车轮 ===
+    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.13, 16);
+    const wheelPos = [0.8, -0.74];
+    for (let i = 0; i < 2; i++) {
       const w = new THREE.Mesh(wheelGeo, wheelMat);
       w.rotation.z = Math.PI / 2;
-      w.position.set(0, 0.4, zOff);
+      w.position.set(0, 0.4, wheelPos[i]);
       this.body.add(w);
       this.wheels.push(w);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.16, 10), rimMat);
+
+      const rim = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.17, 0.17, 0.15, 8),
+        rimMat,
+      );
       rim.rotation.z = Math.PI / 2;
-      rim.position.set(0, 0.4, zOff);
+      rim.position.set(0, 0.4, wheelPos[i]);
       this.body.add(rim);
+
+      // 辐条:5 条,简单硬边
+      const spokes = new THREE.Group();
+      for (let k = 0; k < 5; k++) {
+        const s = new THREE.Mesh(
+          new THREE.BoxGeometry(0.04, 0.32, 0.04),
+          rimMat,
+        );
+        s.rotation.x = (k / 5) * Math.PI;
+        spokes.add(s);
+      }
+      spokes.position.set(0, 0.4, wheelPos[i]);
+      spokes.rotation.z = Math.PI / 2;
+      this.body.add(spokes);
+      // 用引用指向 spokes 后,把它存进 wheel 里以便同步转动
+      (w as any)._spokes = spokes;
     }
 
-    const lamp = new THREE.Mesh(
-      new THREE.BoxGeometry(0.22, 0.12, 0.08),
-      new THREE.MeshStandardMaterial({ color: 0xfff4d2, emissive: 0xfff0c8, emissiveIntensity: 2.2 }),
-    );
-    lamp.position.set(0, 0.78, 1.12);
-    this.body.add(lamp);
+    // === 车灯 ===
+    this.lampMat = new THREE.MeshStandardMaterial({
+      color: 0xfff4d2,
+      emissive: 0xfff0c8,
+      emissiveIntensity: 2.4,
+    });
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.06), this.lampMat);
+    lamp.position.set(0, 0.78, 1.05);
+    this.handlebar.add(lamp);
 
-    const light = new THREE.SpotLight(0xfff2d8, 10, 32, 0.5, 0.35);
-    light.position.set(0, 1.05, 1.0);
-    light.target.position.set(0, 0.3, 9);
-    this.body.add(light);
-    this.body.add(light.target);
+    this.lamp = new THREE.SpotLight(0xfff2d8, 12, 36, 0.55, 0.32);
+    this.lamp.position.set(0, 1.05, 0.9);
+    this.lamp.target.position.set(0, 0.3, 9);
+    this.body.add(this.lamp);
+    this.body.add(this.lamp.target);
     const fill = new THREE.PointLight(0xffc8a0, 2.2, 12);
     fill.position.set(0, 2.4, 0);
     this.body.add(fill);
+
+    // 刹车尾灯
+    const tailMat = new THREE.MeshStandardMaterial({
+      color: 0xff2244,
+      emissive: 0xff2244,
+      emissiveIntensity: 1.2,
+    });
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.04), tailMat);
+    tail.position.set(0, 0.7, -1.05);
+    this.body.add(tail);
   }
 
   get x() {
@@ -138,23 +276,33 @@ export class Rider {
   }
 
   jump() {
-    if (this.jumping || this.sliding) return false;
+    if (this.jumping || this.sliding || this.crashT > 0) return false;
     this.jumping = true;
     this.vy = RUNNER.jump;
     return true;
   }
 
   slide() {
-    if (this.jumping || this.sliding) return false;
+    if (this.jumping || this.sliding || this.crashT > 0) return false;
     this.sliding = true;
     this.slideT = RUNNER.slideTime;
     return true;
   }
 
   crash() {
+    if (this.crashT > 0) return;
     this.invuln = RUNNER.invuln;
     this.shake = 0.5;
     this.speed *= 0.45;
+    this.crashT = 0.9; // 倒地 0.9 秒
+    this.boxWobble = 1.0; // 货箱剧烈晃动
+  }
+
+  /** 由外部粒子系统调用:返回是否刚落地 */
+  consumeLanding() {
+    if (this.wasGrounded || this.y > 0.05) return false;
+    this.wasGrounded = true;
+    return true;
   }
 
   update(dt: number, input: Input, stats: PlayerStats, heavy: boolean, raining = false, idle = false) {
@@ -174,15 +322,18 @@ export class Rider {
         (raining ? 0.88 : 1) +
       (boost && !tired ? RUNNER.boost : 0);
     if (idle) target = this.route && this.s < this.route.length - 1 ? 5.5 : 0;
+    // 摔车中强制减速
+    if (this.crashT > 0) target = 0;
 
     this.speed = lerp(this.speed, target, 1 - Math.pow(0.08, dt));
-    if (this.route) {
+    if (this.route && this.crashT <= 0) {
       this.s = Math.min(this.route.length, this.s + this.speed * dt);
     }
 
     this.vy -= RUNNER.gravity * dt;
     this.y += this.vy * dt;
     if (this.y <= 0) {
+      if (this.y < 0 || this.vy < 0) this.wasGrounded = false;
       this.y = 0;
       this.vy = 0;
       this.jumping = false;
@@ -194,12 +345,50 @@ export class Rider {
 
     this.invuln = Math.max(0, this.invuln - dt);
     this.shake = Math.max(0, this.shake - dt);
+    this.crashT = Math.max(0, this.crashT - dt);
+    this.boxWobble = Math.max(0, this.boxWobble - dt * 1.5);
     this.applyPose();
-    this.body.rotation.z = lerp(this.body.rotation.z, this.lateralV * 0.05, 1 - Math.pow(0.03, dt));
+
+    // 手把随横向速度反向转(左移则车头右摆,模拟反向把)
+    this.steerAngle = lerp(this.steerAngle, -this.lateralV * 0.08, 1 - Math.pow(0.05, dt));
+    this.handlebar.rotation.y = this.steerAngle;
+
+    // 侧倾:速度越大倾角越小(防眩晕),低速可大幅压弯
+    const tiltScale = 0.04 + clamp(1 - this.speed / RUNNER.maxSpeed, 0, 1) * 0.04;
+    this.body.rotation.z = lerp(this.body.rotation.z, this.lateralV * tiltScale, 1 - Math.pow(0.03, dt));
     this.body.rotation.x = lerp(this.body.rotation.x, this.sliding ? 0.55 : this.jumping ? -0.12 : 0, 10 * dt);
     this.body.position.y = this.sliding ? -0.28 : 0;
-    this.body.visible = this.invuln <= 0 || Math.floor(this.invuln * 18) % 2 === 0;
-    for (const w of this.wheels) w.rotation.x += this.speed * dt * 2.6;
+
+    // 摔车倒地动画:绕前轴旋转 70 度
+    if (this.crashT > 0) {
+      const p = 1 - this.crashT / 0.9;
+      const fall = Math.min(1, p * 1.5);
+      this.body.rotation.x = lerp(this.body.rotation.x, 1.22 * fall, 0.3);
+      this.body.visible = true;
+    } else {
+      // 闪烁无敌
+      this.body.visible = this.invuln <= 0 || Math.floor(this.invuln * 18) % 2 === 0;
+    }
+
+    // 货箱弹簧晃动:碰撞后摆动,平时随横向加速度轻微晃
+    const lastLatV = (this as any)._lastLatV ?? this.lateralV;
+    const lateralAccel = (this.lateralV - lastLatV) / dt;
+    (this as any)._lastLatV = this.lateralV;
+    this.boxTilt = lerp(this.boxTilt, Math.sin(performance.now() * 0.003) * 0.04 + lateralAccel * 0.003, 0.1);
+    const wobble = this.boxWobble * Math.sin(performance.now() * 0.02) * 0.4;
+    this.cargoGroup.rotation.x = this.boxTilt + wobble;
+    this.cargoGroup.rotation.z = wobble * 0.6;
+
+    // 头部随转向略微偏
+    this.headMesh.rotation.z = this.steerAngle * 0.4;
+
+    // 车轮旋转 + 辐条同步
+    for (let i = 0; i < 2; i++) {
+      this.wheelSpin[i] += this.speed * dt * 2.8;
+      this.wheels[i].rotation.x = this.wheelSpin[i];
+      const spokes = (this.wheels[i] as any)._spokes as THREE.Group | undefined;
+      if (spokes) spokes.rotation.x = this.wheelSpin[i];
+    }
 
     stats.battery = clamp(stats.battery - this.speed * 0.012 * dt, 0, 100);
     if (boost) stats.stamina = clamp(stats.stamina - 14 * dt, 0, 100);

@@ -769,6 +769,24 @@ body,
   margin-bottom: 6px;
 }
 
+.portrait-img {
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  box-shadow: 0 0 18px rgba(255, 106, 26, 0.45);
+  object-fit: cover;
+  display: block;
+  margin: 0 auto 10px;
+}
+.portrait-img.hidden {
+  display: none;
+}
+#result .portrait-img {
+  border-color: var(--pink);
+  box-shadow: 0 0 18px rgba(255, 45, 149, 0.45);
+}
+
 #stars {
   font-size: 28px;
   color: var(--amber);
