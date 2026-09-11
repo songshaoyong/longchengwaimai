@@ -114,6 +114,48 @@ export function makeSidewalkTexture() {
   return toTex(c, true);
 }
 
+/** 临街底商立面：暖黄橱窗 + 朴素招牌条 */
+export function makeShopFrontMaps(rng: () => number) {
+  const { c, ctx } = canvas(512, 256);
+  const { c: e, ctx: ectx } = canvas(512, 256);
+  ctx.fillStyle = `hsl(${28 + rng() * 20}, 18%, ${14 + rng() * 6}%)`;
+  ctx.fillRect(0, 0, 512, 256);
+  ectx.fillStyle = "#000";
+  ectx.fillRect(0, 0, 512, 256);
+
+  // 檐口 / 招牌底
+  ctx.fillStyle = `hsl(${rng() > 0.5 ? 8 : 200}, 55%, ${22 + rng() * 10}%)`;
+  ctx.fillRect(0, 0, 512, 48);
+  ectx.fillStyle = `hsl(${rng() > 0.5 ? 20 : 190}, 80%, 40%)`;
+  ectx.fillRect(0, 0, 512, 40);
+
+  const units = 3 + Math.floor(rng() * 2);
+  const unitW = 512 / units;
+  for (let i = 0; i < units; i++) {
+    const x = i * unitW + 10;
+    const w = unitW - 20;
+    // 门框
+    ctx.fillStyle = "#0c1018";
+    ctx.fillRect(x, 56, w, 180);
+    // 玻璃橱窗（暖光）
+    const warm = 180 + rng() * 50;
+    const a = 0.75 + rng() * 0.2;
+    ctx.fillStyle = `rgba(255, ${warm}, 110, ${a})`;
+    ctx.fillRect(x + 8, 68, w - 16, 120);
+    ectx.fillStyle = `rgb(255, ${warm - 20}, 90)`;
+    ectx.fillRect(x + 8, 68, w - 16, 120);
+    // 门
+    ctx.fillStyle = `hsl(${30 + rng() * 15}, 25%, 22%)`;
+    ctx.fillRect(x + w * 0.35, 120, w * 0.3, 110);
+    // 卷帘半开
+    if (rng() > 0.55) {
+      ctx.fillStyle = "rgba(40, 50, 60, 0.55)";
+      ctx.fillRect(x + 8, 68, w - 16, 28 + rng() * 40);
+    }
+  }
+  return { map: toTex(c), emissiveMap: toTex(e) };
+}
+
 export function makeNeonSign(text: string, hue: number) {
   const { c, ctx } = canvas(768, 160);
   ctx.clearRect(0, 0, 768, 160);

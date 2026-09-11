@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CELL, CITY_SPAN, GRID_N, ROAD_W } from "./config";
+import { CELL, CITY_SPAN, GRID_N, MOTOR_HALF, BIKE_LANE, LANE_W } from "./config";
 import { mulberry32 } from "./rng";
 
 type Mover = {
@@ -60,7 +60,7 @@ export class CityLife {
         const dir = this.rng() > 0.5 ? 1 : -1;
         const mesh = this.makeCar(carMats, glass, head, tail);
         const x = this.rng() * CITY_SPAN;
-        const z = j * CELL + dir * 1.8;
+        const z = j * CELL + dir * (MOTOR_HALF * 0.55);
         mesh.position.set(x, 0, z);
         mesh.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
         this.group.add(mesh);
@@ -75,7 +75,7 @@ export class CityLife {
         const dir = this.rng() > 0.5 ? 1 : -1;
         const mesh = this.makeCar(carMats, glass, head, tail);
         const z = this.rng() * CITY_SPAN;
-        const x = i * CELL - dir * 1.8;
+        const x = i * CELL - dir * (MOTOR_HALF * 0.55);
         mesh.position.set(x, 0, z);
         mesh.rotation.y = dir > 0 ? 0 : Math.PI;
         this.group.add(mesh);
@@ -100,12 +100,13 @@ export class CityLife {
       const g = new THREE.Group();
       g.add(body, headM);
       const pos = this.rng() * CITY_SPAN;
+      const walkOff = BIKE_LANE + LANE_W / 2 + 0.85;
       if (alongX) {
-        g.position.set(pos, 0, street * CELL + side * (ROAD_W * 0.55 + 0.5));
+        g.position.set(pos, 0, street * CELL + side * walkOff);
         g.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
         this.peds.push({ mesh: g, axis: "x", dir, speed: 1.1 + this.rng() * 0.7, lane: g.position.z });
       } else {
-        g.position.set(street * CELL + side * (ROAD_W * 0.55 + 0.5), 0, pos);
+        g.position.set(street * CELL + side * walkOff, 0, pos);
         g.rotation.y = dir > 0 ? 0 : Math.PI;
         this.peds.push({ mesh: g, axis: "z", dir, speed: 1.1 + this.rng() * 0.7, lane: g.position.x });
       }

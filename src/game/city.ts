@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { CELL, CITY_SPAN, GRID_N, RESTAURANTS, RIBBON_MAX, ROAD_W } from "./config";
+import { CELL, CITY_SPAN, GRID_N, RESTAURANTS, RIBBON_MAX, ROAD_W, MOTOR_HALF, GREEN_W, LANE_W, BIKE_LANE } from "./config";
 import { CUSTOMER_NODES, RESTAURANT_NODES } from "../data/catalog";
-import { makeFacadeMaps, makeNeonSign, makeRoadTexture, makeSidewalkTexture } from "./textures";
+import { makeFacadeMaps, makeNeonSign, makeRoadTexture, makeSidewalkTexture, makeShopFrontMaps } from "./textures";
 import { mulberry32 } from "./rng";
 import { Route, buildLeg } from "./path";
 import { CityLife } from "./life";
@@ -28,7 +28,10 @@ export class Track {
   private life = new CityLife();
   private postMat: THREE.MeshStandardMaterial;
   private facadeMats: THREE.MeshStandardMaterial[] = [];
+  private shopMats: THREE.MeshStandardMaterial[] = [];
   private roadMat!: THREE.MeshStandardMaterial;
+  private laneMat!: THREE.MeshStandardMaterial;
+  private greenMat!: THREE.MeshStandardMaterial;
   private walkMat!: THREE.MeshStandardMaterial;
   private groundMat!: THREE.MeshStandardMaterial;
   private lampLights: THREE.PointLight[] = [];
@@ -52,6 +55,20 @@ export class Track {
       color: 0xc5d0dc,
     });
     this.roadMat = roadMat;
+    // 非机动车道:深色沥青,带白色边线
+    const laneMat = new THREE.MeshStandardMaterial({
+      color: 0x3a3d44,
+      roughness: 0.55,
+      metalness: 0.2,
+    });
+    this.laneMat = laneMat;
+    // 绿化带:深绿
+    const greenMat = new THREE.MeshStandardMaterial({
+      color: 0x1a3a20,
+      roughness: 0.9,
+      metalness: 0.05,
+    });
+    this.greenMat = greenMat;
     const walkTex = makeSidewalkTexture();
     walkTex.repeat.set(CITY_SPAN / 4, 2);
     const walkMat = new THREE.MeshStandardMaterial({
@@ -72,9 +89,24 @@ export class Track {
       });
     });
     this.facadeMats = facades;
+    // 底商立面：暖橱窗，贴在楼块临街一层
+    this.shopMats = [0, 1, 2, 3, 4].map((i) => {
+      const maps = makeShopFrontMaps(mulberry32(501 + i * 23));
+      return new THREE.MeshStandardMaterial({
+        map: maps.map,
+        emissiveMap: maps.emissiveMap,
+        emissive: 0xffffff,
+        emissiveIntensity: 0.95,
+        roughness: 0.55,
+        metalness: 0.08,
+      });
+    });
     // 注册窗户灭灯动画:每套材质随机间隔切换 emissive 强度
     for (const m of facades) {
       this.windowFlicker.push({ mats: [m], nextSwitch: 2 + this.rng() * 4, base: 1.15 });
+    }
+    for (const m of this.shopMats) {
+      this.windowFlicker.push({ mats: [m], nextSwitch: 1.5 + this.rng() * 3, base: 0.95 });
     }
     this.stripeMat = new THREE.MeshStandardMaterial({
       color: 0xff8a20,
@@ -121,30 +153,74 @@ export class Track {
     ground.position.set(CITY_SPAN / 2, -0.04, CITY_SPAN / 2);
     this.group.add(ground);
 
+    // ===== 北京式横截面:机动车道 + 绿化带 + 非机动车道 + 人行道 =====
+    const motorW = MOTOR_HALF * 2;     // 5.0
+    const laneOffset = MOTOR_HALF + GREEN_W + LANE_W / 2; // 非机动车道中心到路中心的距离
     for (let j = 0; j < GRID_N; j++) {
-      const road = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN + ROAD_W, ROAD_W), roadMat);
-      road.rotation.x = -Math.PI / 2;
-      road.position.set(CITY_SPAN / 2, 0.02, j * CELL);
-      this.group.add(road);
-      const walkA = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN + ROAD_W + 3.2, 1.4), walkMat);
-      walkA.rotation.x = -Math.PI / 2;
-      walkA.position.set(CITY_SPAN / 2, 0.04, j * CELL + ROAD_W * 0.52);
-      const walkB = walkA.clone();
-      walkB.position.z = j * CELL - ROAD_W * 0.52;
-      this.group.add(walkA, walkB);
+      // 机动车道(中心)
+      const motor = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN + ROAD_W, motorW), roadMat);
+      motor.rotation.x = -Math.PI / 2;
+      motor.position.set(CITY_SPAN / 2, 0.02, j * CELL);
+      this.group.add(motor);
+      // 两侧绿化带 + 非机动车道 + 人行道
+      for (const side of [-1, 1]) {
+        const gz = j * CELL + side * (MOTOR_HALF + GREEN_W / 2);
+        const green = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN, GREEN_W), greenMat);
+        green.rotation.x = -Math.PI / 2;
+        green.position.set(CITY_SPAN / 2, 0.035, gz);
+        this.group.add(green);
+        // 非机动车道
+        const lz = j * CELL + side * laneOffset;
+        const lane = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN, LANE_W), laneMat);
+        lane.rotation.x = -Math.PI / 2;
+        lane.position.set(CITY_SPAN / 2, 0.025, lz);
+        this.group.add(lane);
+        // 非机动车道白色边线
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xe8eef8, toneMapped: false });
+        const edgeLine = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN, 0.06), lineMat);
+        edgeLine.rotation.x = -Math.PI / 2;
+        edgeLine.position.set(CITY_SPAN / 2, 0.03, lz + side * (LANE_W / 2 - 0.05));
+        this.group.add(edgeLine);
+        // 人行道(加宽)
+        const wz = j * CELL + side * (laneOffset + LANE_W / 2 + 0.7);
+        const walk = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SPAN, 1.4), walkMat);
+        walk.rotation.x = -Math.PI / 2;
+        walk.position.set(CITY_SPAN / 2, 0.05, wz);
+        this.group.add(walk);
+      }
     }
     for (let i = 0; i < GRID_N; i++) {
-      const road = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, CITY_SPAN + ROAD_W), roadMat);
-      road.rotation.x = -Math.PI / 2;
-      road.position.set(i * CELL, 0.03, CITY_SPAN / 2);
-      this.group.add(road);
-      const walkA = new THREE.Mesh(new THREE.PlaneGeometry(1.4, CITY_SPAN + ROAD_W + 3.2), walkMat);
-      walkA.rotation.x = -Math.PI / 2;
-      walkA.position.set(i * CELL + ROAD_W * 0.52, 0.045, CITY_SPAN / 2);
-      const walkB = walkA.clone();
-      walkB.position.x = i * CELL - ROAD_W * 0.52;
-      this.group.add(walkA, walkB);
+      // 机动车道(纵向)
+      const motor = new THREE.Mesh(new THREE.PlaneGeometry(motorW, CITY_SPAN + ROAD_W), roadMat);
+      motor.rotation.x = -Math.PI / 2;
+      motor.position.set(i * CELL, 0.025, CITY_SPAN / 2);
+      this.group.add(motor);
+      for (const side of [-1, 1]) {
+        const gx = i * CELL + side * (MOTOR_HALF + GREEN_W / 2);
+        const green = new THREE.Mesh(new THREE.PlaneGeometry(GREEN_W, CITY_SPAN), greenMat);
+        green.rotation.x = -Math.PI / 2;
+        green.position.set(gx, 0.04, CITY_SPAN / 2);
+        this.group.add(green);
+        const lx = i * CELL + side * laneOffset;
+        const lane = new THREE.Mesh(new THREE.PlaneGeometry(LANE_W, CITY_SPAN), laneMat);
+        lane.rotation.x = -Math.PI / 2;
+        lane.position.set(lx, 0.03, CITY_SPAN / 2);
+        this.group.add(lane);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xe8eef8, toneMapped: false });
+        const edgeLine = new THREE.Mesh(new THREE.PlaneGeometry(0.06, CITY_SPAN), lineMat);
+        edgeLine.rotation.x = -Math.PI / 2;
+        edgeLine.position.set(lx + side * (LANE_W / 2 - 0.05), 0.035, CITY_SPAN / 2);
+        this.group.add(edgeLine);
+        const wx = i * CELL + side * (laneOffset + LANE_W / 2 + 0.7);
+        const walk = new THREE.Mesh(new THREE.PlaneGeometry(1.4, CITY_SPAN), walkMat);
+        walk.rotation.x = -Math.PI / 2;
+        walk.position.set(wx, 0.055, CITY_SPAN / 2);
+        this.group.add(walk);
+      }
     }
+
+    // 行道树:沿每条路两侧每隔 8 米种一棵国槐(InstancedMesh)
+    this.addStreetTrees();
 
     this.addLamps();
     this.addSkyline();
@@ -217,7 +293,7 @@ export class Track {
       if (sm.s < s - 2) continue;
       if (n >= RIBBON_MAX) break;
       if (Math.round(sm.s * 2) % 2 !== 0) continue;
-      this.dummy.position.set(sm.x, 0.07, sm.z);
+      this.dummy.position.set(sm.x + sm.rx * BIKE_LANE, 0.07, sm.z + sm.rz * BIKE_LANE);
       this.dummy.rotation.set(0, sm.yaw, 0);
       this.dummy.updateMatrix();
       this.ribbon.setMatrixAt(n, this.dummy.matrix);
@@ -287,6 +363,20 @@ export class Track {
       mat.opacity = 0.32 * (1 - phase);
       c.mesh.scale.setScalar(0.7 + phase * 0.8);
     }
+
+    // 行道树风摆:树冠轻微旋转
+    if (this.trees && this.treeCount > 0) {
+      const dummy2 = new THREE.Object3D();
+      for (let k = 0; k < this.treeCount; k++) {
+        this.trees.getMatrixAt(k, dummy2.matrix);
+        dummy2.matrix.decompose(dummy2.position, dummy2.quaternion, dummy2.scale);
+        const sway = Math.sin(t * 1.2 + this.treePhases[k]!) * 0.06;
+        dummy2.rotation.set(sway, 0, sway * 0.5);
+        dummy2.updateMatrix();
+        this.trees.setMatrixAt(k, dummy2.matrix);
+      }
+      this.trees.instanceMatrix.needsUpdate = true;
+    }
   }
 
   setPeriod(night: number) {
@@ -295,6 +385,9 @@ export class Track {
     for (const m of this.facadeMats) {
       m.color.setRGB(0.72 + night * 0.28, 0.66 + night * 0.3, 0.58 + night * 0.38);
       m.emissiveIntensity = facadeBase;
+    }
+    for (const m of this.shopMats) {
+      m.emissiveIntensity = 0.55 + night * 0.85;
     }
     // 更新 windowFlicker 的基准
     for (const wf of this.windowFlicker) wf.base = facadeBase;
@@ -366,6 +459,9 @@ export class Track {
     awning.position.set(cx, 3.05, j * CELL + ROAD_W * 0.55 + 0.4);
     this.group.add(awning);
 
+    // 临街底商：四面贴一层暖橱窗铺面（北京路两边小铺）
+    this.addStorefronts(cx, cz, size);
+
     if (this.rng() > 0.4) {
       const hue = this.rng() > 0.5 ? 0x3df0ff : 0xff2d95;
       const stripMat = new THREE.MeshStandardMaterial({ color: hue, emissive: hue, emissiveIntensity: 2.4 });
@@ -404,6 +500,40 @@ export class Track {
         sm.scale.setScalar(0.7 + s * 0.15);
         this.group.add(sm);
         this.chimneyPts.push({ mesh: sm, phase: this.rng() * Math.PI * 2 + s });
+      }
+    }
+  }
+
+  private addStorefronts(cx: number, cz: number, size: number) {
+    const shopH = 3.15;
+    const depth = 0.35;
+    const faceW = size * 0.92;
+    const mat = this.shopMats[Math.floor(this.rng() * this.shopMats.length)]!;
+    const half = size / 2;
+    const faces: { x: number; z: number; rotY: number; alongX: boolean }[] = [
+      { x: cx, z: cz - half - depth / 2, rotY: 0, alongX: true },
+      { x: cx, z: cz + half + depth / 2, rotY: Math.PI, alongX: true },
+      { x: cx - half - depth / 2, z: cz, rotY: Math.PI / 2, alongX: false },
+      { x: cx + half + depth / 2, z: cz, rotY: -Math.PI / 2, alongX: false },
+    ];
+    for (const f of faces) {
+      const geo = f.alongX
+        ? new THREE.BoxGeometry(faceW, shopH, depth)
+        : new THREE.BoxGeometry(depth, shopH, faceW);
+      const shop = new THREE.Mesh(geo, mat);
+      shop.position.set(f.x, shopH / 2, f.z);
+      this.group.add(shop);
+
+      // 门楣小招牌（朴素底商，不全是霓虹）
+      if (this.rng() > 0.35) {
+        const label =
+          this.rng() > 0.55
+            ? ["烟酒茶", "早点", "修车", "便利", "理发", "五金", "药店", "洗衣"][Math.floor(this.rng() * 8)]!
+            : RESTAURANTS[Math.floor(this.rng() * RESTAURANTS.length)]!;
+        const hue = 20 + this.rng() * 40;
+        const sx = f.alongX ? f.x + (this.rng() - 0.5) * faceW * 0.35 : f.x + Math.sin(f.rotY) * 0.2;
+        const sz = f.alongX ? f.z + Math.cos(f.rotY) * 0.2 : f.z + (this.rng() - 0.5) * faceW * 0.35;
+        this.addNeon(label, hue, sx, shopH + 0.55, sz, f.rotY);
       }
     }
   }
@@ -667,7 +797,85 @@ export class Track {
     }
   }
 
-  /** 雨天:路面增加湿光反射感(降低 roughness、提升 metalness) */
+  private addStreetTrees() {
+    // 国槐:树干(圆柱)+ 树冠(低多边形球),用 InstancedMesh 批量渲染
+    const trunkGeo = new THREE.CylinderGeometry(0.12, 0.18, 2.8, 5);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 0.9 });
+    const canopyGeo = new THREE.IcosahedronGeometry(1.4, 1);
+    const canopyMat = new THREE.MeshStandardMaterial({
+      color: 0x2a5a30,
+      roughness: 0.85,
+      flatShading: true,
+    });
+
+    // 计算树的位置
+    const treeOffset = MOTOR_HALF + GREEN_W + LANE_W + 0.8;
+    const spacing = 11;
+    const positions: { x: number; z: number; phase: number }[] = [];
+    for (let j = 0; j < GRID_N; j++) {
+      for (const side of [-1, 1]) {
+        const z = j * CELL + side * treeOffset;
+        for (let x = 6; x < CITY_SPAN - 6; x += spacing) {
+          // 避开路口
+          const nearIntersection = [...Array(GRID_N).keys()].some(
+            (i) => Math.abs(x - i * CELL) < 4,
+          );
+          if (nearIntersection) continue;
+          positions.push({ x: x + (this.rng() - 0.5) * 2, z, phase: this.rng() * Math.PI * 2 });
+        }
+      }
+    }
+    for (let i = 0; i < GRID_N; i++) {
+      for (const side of [-1, 1]) {
+        const x = i * CELL + side * treeOffset;
+        for (let z = 6; z < CITY_SPAN - 6; z += spacing) {
+          const nearIntersection = [...Array(GRID_N).keys()].some(
+            (jj) => Math.abs(z - jj * CELL) < 4,
+          );
+          if (nearIntersection) continue;
+          positions.push({ x, z: z + (this.rng() - 0.5) * 2, phase: this.rng() * Math.PI * 2 });
+        }
+      }
+    }
+
+    const n = positions.length;
+    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
+    const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, n);
+    trunks.frustumCulled = false;
+    canopies.frustumCulled = false;
+
+    const dummy = new THREE.Object3D();
+    for (let k = 0; k < n; k++) {
+      const p = positions[k]!;
+      // 树干
+      dummy.position.set(p.x, 1.4, p.z);
+      dummy.rotation.set(0, this.rng() * Math.PI, 0);
+      const s = 0.85 + this.rng() * 0.3;
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(k, dummy.matrix);
+      // 树冠
+      dummy.position.set(p.x, 3.2 + this.rng() * 0.4, p.z);
+      dummy.rotation.set(0, this.rng() * Math.PI, 0);
+      const cs = (0.9 + this.rng() * 0.4) * s;
+      dummy.scale.setScalar(cs);
+      dummy.updateMatrix();
+      canopies.setMatrixAt(k, dummy.matrix);
+    }
+    trunks.count = n;
+    canopies.count = n;
+    trunks.instanceMatrix.needsUpdate = true;
+    canopies.instanceMatrix.needsUpdate = true;
+    this.group.add(trunks, canopies);
+    this.trees = canopies;
+    this.treeCount = n;
+    this.treePhases = positions.map((p) => p.phase);
+  }
+
+  private trees: THREE.InstancedMesh | null = null;
+  private treeCount = 0;
+  private treePhases: number[] = [];
+
   setWet(rain: number) {
     const r = this.rainBaseRoughness;
     const m = this.rainBaseMetalness;
@@ -692,30 +900,32 @@ export class Track {
         continue;
       }
       const p = patterns[Math.floor(this.rng() * patterns.length)]!;
+      // 障碍相对非机动车道布置：锥桶/路障堵骑行带，汽车占机动车道
+      const bike = BIKE_LANE;
       if (p === "weave") {
-        this.addObs("cone", s, -2.5);
-        this.addObs("cone", s + 4.5, 2.5);
-        this.addObs("barrier", s + 9, this.rng() > 0.5 ? -2.1 : 2.1);
+        this.addObs("cone", s, bike - 0.9);
+        this.addObs("cone", s + 4.5, bike + 0.85);
+        this.addObs("barrier", s + 9, bike + (this.rng() > 0.5 ? -1.1 : 0.2));
         s += 14 + gap * 0.55;
       } else if (p === "jump") {
-        this.addObs("barrier", s, 0);
+        this.addObs("barrier", s, bike);
         s += 10 + gap * 0.45;
       } else if (p === "slide") {
-        this.addObs("hang", s, 0);
+        this.addObs("hang", s, bike);
         s += 10 + gap * 0.45;
       } else if (p === "squeeze") {
-        this.addObs("car", s, -2.7);
-        this.addObs("cone", s, 2.5);
+        this.addObs("car", s, MOTOR_HALF * 0.55);
+        this.addObs("cone", s, bike + 0.4);
         s += 12 + gap * 0.4;
       } else if (p === "car") {
-        this.addObs("car", s, this.rng() > 0.5 ? 2.3 : -2.3);
+        this.addObs("car", s, this.rng() > 0.5 ? MOTOR_HALF * 0.6 : -MOTOR_HALF * 0.4);
         s += 11 + gap * 0.5;
       } else {
-        this.addObs(this.rng() > 0.5 ? "barrier" : "cone", s, (this.rng() - 0.5) * 5.4);
+        this.addObs(this.rng() > 0.5 ? "barrier" : "cone", s, bike + (this.rng() - 0.5) * 1.6);
         s += gap;
       }
       if (difficulty > 2.2 && this.rng() > 0.55 && s < route.length - 18 && !avoid(s)) {
-        this.addObs("hang", s + 3.5, 0);
+        this.addObs("hang", s + 3.5, bike);
         s += 8;
       }
     }

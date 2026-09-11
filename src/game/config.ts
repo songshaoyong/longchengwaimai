@@ -1,8 +1,16 @@
 export const GRID_N = 15;
 export const CELL = 46;
 export const ROAD_W = 10.5;
-export const ROAD_HALF = 4.4;
 export const CITY_SPAN = (GRID_N - 1) * CELL;
+
+// 路面分层(北京式横截面):机动车道 + 绿化带 + 非机动车道 + 人行道
+export const MOTOR_HALF = 2.5; // 机动车道半宽
+export const GREEN_W = 0.55; // 绿化带宽
+export const LANE_W = 2.3; // 非机动车道宽
+/** 路中心 → 右侧非机动车道中心（骑手默认跑这里） */
+export const BIKE_LANE = MOTOR_HALF + GREEN_W + LANE_W / 2;
+/** 横向可动范围：可蹭进机动车道躲障，但默认落在非机动车道 */
+export const ROAD_HALF = BIKE_LANE + LANE_W / 2 + 0.35;
 export const RIBBON_MAX = 960;
 
 export const RUNNER = {

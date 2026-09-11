@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ROAD_HALF, RUNNER } from "./config";
+import { BIKE_LANE, ROAD_HALF, RUNNER } from "./config";
 import type { Input } from "./input";
 import { clamp, lerp } from "./rng";
 import type { Route } from "./path";
@@ -270,7 +270,8 @@ export class Rider {
   setRoute(route: Route) {
     this.route = route;
     this.s = 0.2;
-    this.lateral = 0;
+    // 默认跑在右侧非机动车道，不走机动车道中心
+    this.lateral = BIKE_LANE;
     this.speed = RUNNER.baseSpeed;
     this.applyPose();
   }
@@ -311,7 +312,8 @@ export class Rider {
 
     const axis = input.axis();
     this.lateralV = lerp(this.lateralV, -axis.x * RUNNER.strafe, 1 - Math.pow(0.04, dt));
-    this.lateral = clamp(this.lateral + this.lateralV * dt, -ROAD_HALF, ROAD_HALF);
+    // 以非机动车道为中心左右躲，左侧可蹭进机动车道，右侧不冲进人行道太深
+    this.lateral = clamp(this.lateral + this.lateralV * dt, 0.35, ROAD_HALF);
 
     const boost = input.down("ShiftLeft") || input.down("ShiftRight");
     const tired = stats.stamina <= 1;
