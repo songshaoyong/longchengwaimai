@@ -47,6 +47,7 @@ export class Game {
   private particles = new Particles();
   private mode: GameMode = "title";
   private holding = false;
+  private wasHutong = false;
   private raining = false;
   private rainClock = 18;
   private minutes = 10 * 60 + 20;
@@ -524,6 +525,13 @@ export class Game {
       const idle = !this.orders.active;
       const heavy = Boolean(this.holding && this.orders.active?.kind === "heavy");
       this.rider.update(dt, this.input, this.stats, heavy, this.raining, idle);
+      if (this.orders.active) {
+        const nowHutong = this.rider.inHutong;
+        if (nowHutong && !this.wasHutong) this.hud.toastMsg("拐进胡同 · 减速慢行");
+        this.wasHutong = nowHutong;
+      } else {
+        this.wasHutong = false;
+      }
       this.track.updateRibbon(this.rider.s);
       // 落地尘土 + 漂移烟
       if (this.rider.consumeLanding()) {
@@ -576,6 +584,8 @@ export class Game {
     let prompt: string | null = null;
     if (this.mode === "playing" && !this.orders.active) {
       prompt = this.orders.offers.length ? "看手机接单 · 按 1 / 2 / 3" : "听单中…";
+    } else if (this.mode === "playing" && this.rider.inHutong) {
+      prompt = "胡同窄道 · 小心墙根";
     } else if (this.mode === "playing" && gate && gate.s - this.rider.s < 18) {
       prompt = gate.kind === "pickup" ? "前方取餐" : "前方送达";
     } else if (this.mode === "playing" && obs) {

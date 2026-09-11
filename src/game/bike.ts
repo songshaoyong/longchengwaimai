@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BIKE_LANE, ROAD_HALF, RUNNER } from "./config";
+import { BIKE_LANE, ROAD_HALF, RUNNER, HUTONG_SPEED, HUTONG_STRAFE } from "./config";
 import type { Input } from "./input";
 import { clamp, lerp } from "./rng";
 import type { Route } from "./path";
@@ -267,10 +267,14 @@ export class Rider {
     return this.route ? this.route.at(this.s) : null;
   }
 
+  get inHutong() {
+    return Boolean(this.sample()?.hutong);
+  }
+
   setRoute(route: Route) {
     this.route = route;
     this.s = 0.2;
-    // 默认跑在右侧非机动车道，不走机动车道中心
+    // 大街默认右侧非机动车道；胡同段由 update 收束到路心
     this.lateral = BIKE_LANE;
     this.speed = RUNNER.baseSpeed;
     this.applyPose();
@@ -311,9 +315,19 @@ export class Rider {
     if (input.consume("KeyS") || input.consume("ControlLeft") || input.consume("ArrowDown")) this.slide();
 
     const axis = input.axis();
-    this.lateralV = lerp(this.lateralV, -axis.x * RUNNER.strafe, 1 - Math.pow(0.04, dt));
-    // 以非机动车道为中心左右躲，左侧可蹭进机动车道，右侧不冲进人行道太深
-    this.lateral = clamp(this.lateral + this.lateralV * dt, 0.35, ROAD_HALF);
+    const hutong = this.inHutong;
+    this.lateralV = lerp(this.lateralV, -axis.x * RUNNER.strafe * (hutong ? 0.55 : 1), 1 - Math.pow(0.04, dt));
+    if (hutong) {
+      // 胡同极窄：贴路心左右微躲
+      this.lateral = clamp(this.lateral + this.lateralV * dt, -HUTONG_STRAFE, HUTONG_STRAFE);
+      this.lateral = lerp(this.lateral, 0, 1 - Math.pow(0.12, dt));
+    } else {
+      this.lateral = clamp(this.lateral + this.lateralV * dt, 0.35, ROAD_HALF);
+      // 出胡同后缓缓回到非机动车道
+      if (this.lateral < BIKE_LANE - 0.8) {
+        this.lateral = lerp(this.lateral, BIKE_LANE, 1 - Math.pow(0.15, dt));
+      }
+    }
 
     const boost = input.down("ShiftLeft") || input.down("ShiftRight");
     const tired = stats.stamina <= 1;
@@ -321,8 +335,9 @@ export class Rider {
       Math.min(RUNNER.maxSpeed, RUNNER.baseSpeed + stats.combo * 0.18) *
         (heavy ? 0.82 : 1) *
         (tired ? 0.7 : 1) *
-        (raining ? 0.88 : 1) +
-      (boost && !tired ? RUNNER.boost : 0);
+        (raining ? 0.88 : 1) *
+        (hutong ? HUTONG_SPEED : 1) +
+      (boost && !tired && !hutong ? RUNNER.boost : 0);
     if (idle) target = this.route && this.s < this.route.length - 1 ? 5.5 : 0;
     // 摔车中强制减速
     if (this.crashT > 0) target = 0;
@@ -417,7 +432,8 @@ export class Rider {
     const px = this.group.position.x;
     const py = this.group.position.y;
     const pz = this.group.position.z;
-    const wantFov = this.firstPerson ? 72 : 58 + Math.max(0, this.speed - 12) * 0.75;
+    const hutong = Boolean(sm?.hutong);
+    const wantFov = this.firstPerson ? 72 : hutong ? 64 : 58 + Math.max(0, this.speed - 12) * 0.75;
     camera.fov = lerp(camera.fov, wantFov, 1 - Math.pow(0.08, dt));
     camera.updateProjectionMatrix();
     if (this.firstPerson) {
@@ -425,13 +441,14 @@ export class Rider {
       camera.lookAt(px + tx * 12, py + 1.25, pz + tz * 12);
       return;
     }
-    const back = 6.5;
+    const back = hutong ? 4.1 : 6.5;
+    const camH = hutong ? 2.55 : 3.25;
     const target = new THREE.Vector3(
-      px - tx * back + rx * 0.2 + shakeX,
-      py + 3.25 + shakeY,
-      pz - tz * back + rz * 0.2,
+      px - tx * back + rx * 0.12 + shakeX,
+      py + camH + shakeY,
+      pz - tz * back + rz * 0.12,
     );
     camera.position.lerp(target, 1 - Math.pow(0.00025, dt));
-    camera.lookAt(px + tx * 13, py + 1.05, pz + tz * 13);
+    camera.lookAt(px + tx * (hutong ? 9 : 13), py + (hutong ? 0.85 : 1.05), pz + tz * (hutong ? 9 : 13));
   }
 }

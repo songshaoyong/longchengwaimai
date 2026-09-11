@@ -177,14 +177,21 @@ export class Hud {
     const turn = route.nextTurn(rider.s);
     const destS = holding ? route.dropoffS : route.pickupS;
     const destLeft = Math.max(0, destS - rider.s);
-    if (turn.dir === "arrive" || destLeft <= turn.dist + 1) {
+    if (rider.inHutong) {
+      this.navIcon.textContent = "〓";
+      this.navDist.textContent = `${Math.round(destLeft)}米`;
+      this.navAction.textContent = turn.street.includes("胡同")
+        ? `穿行${turn.street} · 减速慢行`
+        : "胡同穿行 · 减速慢行";
+    } else if (turn.dir === "arrive" || destLeft <= turn.dist + 1) {
       this.navIcon.textContent = holding ? "◉" : "◎";
       this.navDist.textContent = `${Math.round(destLeft)}米`;
       this.navAction.textContent = holding ? "即将送达客户" : "即将到达店门口取餐";
     } else {
       this.navIcon.textContent = turn.dir === "left" ? "↰" : "↱";
       this.navDist.textContent = `${Math.round(turn.dist)}米`;
-      this.navAction.textContent = `${holding ? "送餐" : "去取餐"} · ${turn.dir === "left" ? "左转" : "右转"}进入${turn.street}`;
+      const viaHutong = turn.street.includes("胡同");
+      this.navAction.textContent = `${holding ? "送餐" : "去取餐"} · ${turn.dir === "left" ? "左转" : "右转"}进入${turn.street}${viaHutong ? "（近路）" : ""}`;
     }
   }
 

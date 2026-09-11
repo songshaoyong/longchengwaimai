@@ -32,6 +32,8 @@ export type Sample = {
   rz: number;
   yaw: number;
   s: number;
+  /** 当前采样点是否在胡同内（窄道限速 / 拉近镜头） */
+  hutong?: boolean;
 };
 
 export type NavTurn = {

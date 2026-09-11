@@ -13,6 +13,12 @@ export const BIKE_LANE = MOTOR_HALF + GREEN_W + LANE_W / 2;
 export const ROAD_HALF = BIKE_LANE + LANE_W / 2 + 0.35;
 export const RIBBON_MAX = 960;
 
+/** 胡同：尺度断崖（大街 ~10m → 胡同 ~4m） */
+export const HUTONG_W = 4.0;
+export const HUTONG_HALF = HUTONG_W / 2;
+export const HUTONG_SPEED = 0.52; // 进胡同限速
+export const HUTONG_STRAFE = 1.15; // 胡同内左右余地
+
 export const RUNNER = {
   baseSpeed: 15.5,
   maxSpeed: 24,

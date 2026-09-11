@@ -1,9 +1,9 @@
 import * as THREE from "three";
-import { CELL, CITY_SPAN, GRID_N, RESTAURANTS, RIBBON_MAX, ROAD_W, MOTOR_HALF, GREEN_W, LANE_W, BIKE_LANE } from "./config";
+import { CELL, CITY_SPAN, GRID_N, RESTAURANTS, RIBBON_MAX, ROAD_W, MOTOR_HALF, GREEN_W, LANE_W, BIKE_LANE, HUTONG_W } from "./config";
 import { CUSTOMER_NODES, RESTAURANT_NODES } from "../data/catalog";
 import { makeFacadeMaps, makeNeonSign, makeRoadTexture, makeSidewalkTexture, makeShopFrontMaps } from "./textures";
 import { mulberry32 } from "./rng";
-import { Route, buildLeg } from "./path";
+import { Route, buildLeg, hasHutong, hutongName } from "./path";
 import { CityLife } from "./life";
 import type { Gate, GridNode, Obstacle } from "./types";
 
@@ -34,6 +34,9 @@ export class Track {
   private greenMat!: THREE.MeshStandardMaterial;
   private walkMat!: THREE.MeshStandardMaterial;
   private groundMat!: THREE.MeshStandardMaterial;
+  private hutongMat!: THREE.MeshStandardMaterial;
+  private hutongRoadMat!: THREE.MeshStandardMaterial;
+  private courtyardMat!: THREE.MeshStandardMaterial;
   private lampLights: THREE.PointLight[] = [];
   private bulbMat!: THREE.MeshStandardMaterial;
   private neonGlows: THREE.MeshBasicMaterial[] = [];
@@ -77,6 +80,21 @@ export class Track {
       color: 0x6a5c55,
     });
     this.walkMat = walkMat;
+    this.hutongRoadMat = new THREE.MeshStandardMaterial({
+      color: 0x2a2c32,
+      roughness: 0.7,
+      metalness: 0.12,
+    });
+    this.hutongMat = new THREE.MeshStandardMaterial({
+      color: 0x6a6e74,
+      roughness: 0.92,
+      metalness: 0.05,
+    });
+    this.courtyardMat = new THREE.MeshStandardMaterial({
+      color: 0x8a8580,
+      roughness: 0.88,
+      metalness: 0.04,
+    });
     const facades = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
       const maps = makeFacadeMaps(mulberry32(90 + i * 17));
       return new THREE.MeshStandardMaterial({
@@ -230,7 +248,8 @@ export class Track {
 
     for (let i = 0; i < GRID_N - 1; i++) {
       for (let j = 0; j < GRID_N - 1; j++) {
-        this.addBuilding(i, j, facades[Math.floor(this.rng() * facades.length)]!);
+        if (hasHutong(i, j)) this.addHutongBlock(i, j, facades[Math.floor(this.rng() * facades.length)]!);
+        else this.addBuilding(i, j, facades[Math.floor(this.rng() * facades.length)]!);
       }
     }
 
@@ -293,7 +312,8 @@ export class Track {
       if (sm.s < s - 2) continue;
       if (n >= RIBBON_MAX) break;
       if (Math.round(sm.s * 2) % 2 !== 0) continue;
-      this.dummy.position.set(sm.x + sm.rx * BIKE_LANE, 0.07, sm.z + sm.rz * BIKE_LANE);
+      const laneLat = sm.hutong ? 0 : BIKE_LANE;
+      this.dummy.position.set(sm.x + sm.rx * laneLat, 0.07, sm.z + sm.rz * laneLat);
       this.dummy.rotation.set(0, sm.yaw, 0);
       this.dummy.updateMatrix();
       this.ribbon.setMatrixAt(n, this.dummy.matrix);
@@ -402,6 +422,9 @@ export class Track {
     this.walkMat.color.setRGB(0.55 + day * 0.12, 0.48 + day * 0.08, 0.4);
     this.groundMat.color.setRGB(0.05 + day * 0.28, 0.07 + day * 0.32, 0.09 + day * 0.12);
     this.roofMat.color.setRGB(0.12 + day * 0.28, 0.14 + day * 0.28, 0.17 + day * 0.28);
+    this.courtyardMat.color.setRGB(0.48 + day * 0.12, 0.46 + day * 0.1, 0.42 + day * 0.08);
+    this.hutongMat.color.setRGB(0.35 + day * 0.12, 0.36 + day * 0.1, 0.38 + day * 0.08);
+    this.hutongRoadMat.color.setRGB(0.14 + night * 0.08, 0.15 + night * 0.08, 0.17 + night * 0.1);
     this.bulbMat.emissiveIntensity = 0.12 + night * 2.3;
     for (const light of this.lampLights) light.intensity = 3.2 * night;
     for (const g of this.neonGlows) g.opacity = 0.04 + night * 0.16;
@@ -409,6 +432,80 @@ export class Track {
     this.skylineMat.color.setRGB(0.08 + day * 0.32, 0.12 + day * 0.28, 0.16 + day * 0.28);
     this.skylineMat.emissiveIntensity = 0.08 + night * 0.18;
     this.awningMat.emissiveIntensity = 0.08 + night * 0.28;
+  }
+
+  /** 东西向胡同切开地块：灰墙四合院 + 4 米窄道（尺度断崖） */
+  private addHutongBlock(i: number, j: number, mat: THREE.Material) {
+    const size = CELL - ROAD_W - 1.4;
+    const cx = (i + 0.5) * CELL;
+    const cz = (j + 0.5) * CELL;
+    const gap = HUTONG_W + 0.35;
+    const halfLen = size / 2;
+    const wingD = (size - gap) / 2;
+
+    // 南北两进院落（矮灰墙，老城尺度）
+    for (const side of [-1, 1] as const) {
+      const wingH = 4.2 + this.rng() * 2.4;
+      const wz = cz + side * (gap / 2 + wingD / 2);
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(size * 0.96, wingH, wingD), this.courtyardMat);
+      wing.position.set(cx, wingH / 2, wz);
+      this.group.add(wing);
+      // 院墙压顶
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(size * 0.98, 0.22, wingD + 0.15), this.hutongMat);
+      cap.position.set(cx, wingH + 0.1, wz);
+      this.group.add(cap);
+      // 偶发二层小楼贴在院落外侧
+      if (this.rng() > 0.55) {
+        const h2 = wingH + 3 + this.rng() * 4;
+        const upper = new THREE.Mesh(new THREE.BoxGeometry(size * 0.55, h2 - wingH, wingD * 0.7), mat);
+        upper.position.set(cx + (this.rng() - 0.5) * size * 0.2, (wingH + h2) / 2, wz);
+        this.group.add(upper);
+      }
+    }
+
+    // 胡同路面（比大街窄一截，略沉）
+    const alleyLen = size + 1.2;
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(alleyLen, HUTONG_W), this.hutongRoadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.set(cx, 0.04, cz);
+    this.group.add(road);
+    // 两侧墙根线
+    for (const side of [-1, 1] as const) {
+      const curb = new THREE.Mesh(
+        new THREE.BoxGeometry(alleyLen, 0.35, 0.18),
+        this.hutongMat,
+      );
+      curb.position.set(cx, 0.18, cz + side * (HUTONG_W / 2 + 0.05));
+      this.group.add(curb);
+    }
+
+    // 胡同口门墩 / 抱鼓石
+    for (const end of [-1, 1] as const) {
+      const px = cx + end * halfLen;
+      for (const side of [-1, 1] as const) {
+        const pier = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.1, 0.45), this.hutongMat);
+        pier.position.set(px, 0.55, cz + side * (HUTONG_W / 2 + 0.35));
+        this.group.add(pier);
+        const drum = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), this.courtyardMat);
+        drum.position.set(px, 1.2, cz + side * (HUTONG_W / 2 + 0.35));
+        this.group.add(drum);
+      }
+      // 胡同名木牌
+      if (end < 0 || this.rng() > 0.4) {
+        const name = hutongName(i, j);
+        this.addNeon(name, 30 + this.rng() * 25, px + end * 0.2, 2.4, cz, Math.PI / 2);
+      }
+    }
+
+    // 墙根停电动车
+    const bikeMat = new THREE.MeshStandardMaterial({ color: 0x1a2030, metalness: 0.4, roughness: 0.4 });
+    for (let k = 0; k < 3; k++) {
+      if (this.rng() > 0.45) continue;
+      const bike = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.55, 1.1), bikeMat);
+      bike.position.set(cx + (this.rng() - 0.5) * size * 0.7, 0.28, cz + (this.rng() > 0.5 ? 1 : -1) * (HUTONG_W / 2 + 0.55));
+      bike.rotation.y = (this.rng() - 0.5) * 0.4;
+      this.group.add(bike);
+    }
   }
 
   private addBuilding(i: number, j: number, mat: THREE.Material) {
@@ -900,8 +997,15 @@ export class Track {
         continue;
       }
       const p = patterns[Math.floor(this.rng() * patterns.length)]!;
-      // 障碍相对非机动车道布置：锥桶/路障堵骑行带，汽车占机动车道
-      const bike = BIKE_LANE;
+      const atHutong = Boolean(route.at(s).hutong);
+      // 障碍相对非机动车道布置；胡同内只放锥桶，不塞汽车
+      const bike = atHutong ? 0 : BIKE_LANE;
+      if (atHutong) {
+        this.addObs("cone", s, (this.rng() - 0.5) * 1.2);
+        if (this.rng() > 0.55) this.addObs("cone", s + 3.5, (this.rng() - 0.5) * 1.0);
+        s += 10 + gap * 0.6;
+        continue;
+      }
       if (p === "weave") {
         this.addObs("cone", s, bike - 0.9);
         this.addObs("cone", s + 4.5, bike + 0.85);
