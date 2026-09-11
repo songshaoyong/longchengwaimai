@@ -114,6 +114,48 @@ export function makeSidewalkTexture() {
   return toTex(c, true);
 }
 
+/** 临街底商立面：暖黄橱窗 + 朴素招牌条 */
+export function makeShopFrontMaps(rng: () => number) {
+  const { c, ctx } = canvas(512, 256);
+  const { c: e, ctx: ectx } = canvas(512, 256);
+  ctx.fillStyle = `hsl(${28 + rng() * 20}, 18%, ${14 + rng() * 6}%)`;
+  ctx.fillRect(0, 0, 512, 256);
+  ectx.fillStyle = "#000";
+  ectx.fillRect(0, 0, 512, 256);
+
+  // 檐口 / 招牌底
+  ctx.fillStyle = `hsl(${rng() > 0.5 ? 8 : 200}, 55%, ${22 + rng() * 10}%)`;
+  ctx.fillRect(0, 0, 512, 48);
+  ectx.fillStyle = `hsl(${rng() > 0.5 ? 20 : 190}, 80%, 40%)`;
+  ectx.fillRect(0, 0, 512, 40);
+
+  const units = 3 + Math.floor(rng() * 2);
+  const unitW = 512 / units;
+  for (let i = 0; i < units; i++) {
+    const x = i * unitW + 10;
+    const w = unitW - 20;
+    // 门框
+    ctx.fillStyle = "#0c1018";
+    ctx.fillRect(x, 56, w, 180);
+    // 玻璃橱窗（暖光）
+    const warm = 180 + rng() * 50;
+    const a = 0.75 + rng() * 0.2;
+    ctx.fillStyle = `rgba(255, ${warm}, 110, ${a})`;
+    ctx.fillRect(x + 8, 68, w - 16, 120);
+    ectx.fillStyle = `rgb(255, ${warm - 20}, 90)`;
+    ectx.fillRect(x + 8, 68, w - 16, 120);
+    // 门
+    ctx.fillStyle = `hsl(${30 + rng() * 15}, 25%, 22%)`;
+    ctx.fillRect(x + w * 0.35, 120, w * 0.3, 110);
+    // 卷帘半开
+    if (rng() > 0.55) {
+      ctx.fillStyle = "rgba(40, 50, 60, 0.55)";
+      ctx.fillRect(x + 8, 68, w - 16, 28 + rng() * 40);
+    }
+  }
+  return { map: toTex(c), emissiveMap: toTex(e) };
+}
+
 export function makeNeonSign(text: string, hue: number) {
   const { c, ctx } = canvas(768, 160);
   ctx.clearRect(0, 0, 768, 160);
@@ -173,6 +215,60 @@ export function paintSky(tex: THREE.CanvasTexture, hour: number, raining: boolea
   }
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, c.width, c.height);
+
+  // 月亮:夜晚出现,固定位置(右上)
+  if (night > 0.3 && !raining) {
+    const mx = c.width * 0.78;
+    const my = c.height * 0.18;
+    const mr = 14;
+    const moonAlpha = Math.min(1, (night - 0.3) / 0.5);
+    // 月光晕
+    const halo = ctx.createRadialGradient(mx, my, mr * 0.5, mx, my, mr * 4);
+    halo.addColorStop(0, `rgba(255, 240, 220, ${0.25 * moonAlpha})`);
+    halo.addColorStop(1, "rgba(255, 240, 220, 0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(mx - mr * 4, my - mr * 4, mr * 8, mr * 8);
+    // 月亮本体
+    ctx.fillStyle = `rgba(255, 245, 224, ${0.92 * moonAlpha})`;
+    ctx.beginPath();
+    ctx.arc(mx, my, mr, 0, Math.PI * 2);
+    ctx.fill();
+    // 月相阴影(右下偏,模拟半月)
+    ctx.fillStyle = `rgba(20, 18, 38, ${0.35 * moonAlpha})`;
+    ctx.beginPath();
+    ctx.arc(mx + mr * 0.45, my + mr * 0.15, mr * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 太阳:白天出现,固定位置(右上)
+  if (night < 0.3 && !raining) {
+    const sx = c.width * 0.78;
+    const sy = c.height * 0.22;
+    const sr = 18;
+    const sunAlpha = Math.min(1, (0.3 - night) / 0.3);
+    const halo = ctx.createRadialGradient(sx, sy, sr * 0.5, sx, sy, sr * 5);
+    halo.addColorStop(0, `rgba(255, 240, 180, ${0.4 * sunAlpha})`);
+    halo.addColorStop(1, "rgba(255, 240, 180, 0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(sx - sr * 5, sy - sr * 5, sr * 10, sr * 10);
+    ctx.fillStyle = `rgba(255, 248, 210, ${0.9 * sunAlpha})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 城市光污染:夜晚地平线橙色辉光带
+  if (night > 0.2) {
+    const glowAlpha = (night - 0.2) * 0.6;
+    const glow = ctx.createLinearGradient(0, c.height * 0.82, 0, c.height);
+    glow.addColorStop(0, `rgba(255, 140, 60, 0)`);
+    glow.addColorStop(0.5, `rgba(255, 120, 50, ${0.18 * glowAlpha})`);
+    glow.addColorStop(1, `rgba(255, 90, 40, ${0.32 * glowAlpha})`);
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, c.height * 0.82, c.width, c.height * 0.18);
+  }
+
+  // 星星
   if (night > 0.35) {
     for (const s of SKY_STARS) {
       ctx.fillStyle = `rgba(230, 236, 255, ${s.a * (night - 0.3)})`;
@@ -199,4 +295,25 @@ export function makeLogoTexture() {
   ctx.textBaseline = "middle";
   ctx.fillText("龙", 128, 138);
   return toTex(c);
+}
+
+/** 程序化云层贴图:黑底 + 随机白色软团 */
+export function makeCloudTexture() {
+  const { c, ctx } = canvas(512, 512);
+  ctx.fillStyle = "rgba(0,0,0,0)";
+  ctx.clearRect(0, 0, 512, 512);
+  for (let i = 0; i < 18; i++) {
+    const x = rng() * 512;
+    const y = rng() * 512;
+    const r = 24 + rng() * 60;
+    const alpha = 0.06 + rng() * 0.1;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+    g.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return toTex(c, true);
 }

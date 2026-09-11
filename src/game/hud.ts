@@ -3,6 +3,7 @@ import type { Track } from "./city";
 import { nodePos } from "./path";
 import { kindLabel, type OrderSystem } from "./orders";
 import { periodName } from "./period";
+import { makeNpcTexture, NPC_NAME_TO_ID } from "./portraits";
 import type { Order, PlayerStats } from "./types";
 import type { Rider } from "./bike";
 
@@ -37,6 +38,9 @@ export class Hud {
   private resultPay = el<HTMLElement>("result-pay");
   private dlgWho = el<HTMLElement>("dlg-who");
   private dlgText = el<HTMLElement>("dlg-text");
+  private dlgPortrait = el<HTMLImageElement>("dlg-portrait");
+  private resultPortrait = el<HTMLImageElement>("result-portrait");
+  private portraitCache: Record<string, string> = {};
   private combo = el<HTMLElement>("combo");
   private deliveries = el<HTMLElement>("deliveries");
   private map = el<HTMLCanvasElement>("minimap");
@@ -144,10 +148,11 @@ export class Hud {
     if (active) return;
     offers.forEach((o, i) => {
       const card = document.createElement("div");
-      card.className = `offer ${o.kind === "urgent" ? "urgent" : ""}`;
+      card.className = `offer ${o.kind === "urgent" ? "urgent" : ""} ${o.storyArc ? "story" : ""}`;
       card.innerHTML = `
-        <div class="offer-top"><span>${kindLabel(o.kind)} · ${o.food}</span><b>¥${o.pay}</b></div>
+        <div class="offer-top"><span>${o.storyArc ? "常客剧情" : kindLabel(o.kind)} · ${o.food}</span><b>¥${o.pay}</b></div>
         <div class="meta">① ${o.restaurantName} 取餐 → ② ${o.customerName}</div>
+        ${o.offerHint ? `<div class="story-tag">${o.offerHint}</div>` : ""}
         ${o.note ? `<div class="note">备注：${o.note}</div>` : ""}
         <div class="offer-bot"><span>${Math.max(1, Math.ceil(o.expire))}s 后过期</span><button type="button">接单 ${i + 1}</button></div>
       `;
@@ -173,14 +178,21 @@ export class Hud {
     const turn = route.nextTurn(rider.s);
     const destS = holding ? route.dropoffS : route.pickupS;
     const destLeft = Math.max(0, destS - rider.s);
-    if (turn.dir === "arrive" || destLeft <= turn.dist + 1) {
+    if (rider.inHutong) {
+      this.navIcon.textContent = "〓";
+      this.navDist.textContent = `${Math.round(destLeft)}米`;
+      this.navAction.textContent = turn.street.includes("胡同")
+        ? `穿行${turn.street} · 减速慢行`
+        : "胡同穿行 · 减速慢行";
+    } else if (turn.dir === "arrive" || destLeft <= turn.dist + 1) {
       this.navIcon.textContent = holding ? "◉" : "◎";
       this.navDist.textContent = `${Math.round(destLeft)}米`;
       this.navAction.textContent = holding ? "即将送达客户" : "即将到达店门口取餐";
     } else {
       this.navIcon.textContent = turn.dir === "left" ? "↰" : "↱";
       this.navDist.textContent = `${Math.round(turn.dist)}米`;
-      this.navAction.textContent = `${holding ? "送餐" : "去取餐"} · ${turn.dir === "left" ? "左转" : "右转"}进入${turn.street}`;
+      const viaHutong = turn.street.includes("胡同");
+      this.navAction.textContent = `${holding ? "送餐" : "去取餐"} · ${turn.dir === "left" ? "左转" : "右转"}进入${turn.street}${viaHutong ? "（近路）" : ""}`;
     }
   }
 
@@ -188,13 +200,32 @@ export class Hud {
     this.show("dialogue", true);
     this.dlgWho.textContent = who;
     this.dlgText.textContent = text;
+    this.setPortrait(this.dlgPortrait, who);
   }
 
-  showResult(stars: number, lines: string[], pay: number) {
+  showResult(stars: number, lines: string[], pay: number, customer?: string) {
     this.show("result", true);
     this.stars.textContent = "★".repeat(stars) + "☆".repeat(5 - stars);
     this.resultLines.innerHTML = lines.map((l) => `<li>${l}</li>`).join("");
     this.resultPay.textContent = pay > 0 ? `+ ¥${pay}` : "未入账";
+    this.setPortrait(this.resultPortrait, customer ?? "");
+  }
+
+  private setPortrait(img: HTMLImageElement, name: string) {
+    const id = NPC_NAME_TO_ID[name];
+    if (!id) {
+      img.classList.add("hidden");
+      img.src = "";
+      return;
+    }
+    if (!this.portraitCache[id]) {
+      const tex = makeNpcTexture(id);
+      // CanvasTexture 转 dataURL
+      const c = tex.image as HTMLCanvasElement;
+      this.portraitCache[id] = c.toDataURL();
+    }
+    img.src = this.portraitCache[id]!;
+    img.classList.remove("hidden");
   }
 
   drawGps(track: Track, rider: Rider, holding: boolean) {

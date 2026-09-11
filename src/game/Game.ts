@@ -13,8 +13,9 @@ import { Input } from "./input";
 import { OrderSystem } from "./orders";
 import { buildLeg } from "./path";
 import { clearSave, defaultSave, loadSave, snapshot, writeSave } from "./save";
-import { paintSky, makeSkyTexture } from "./textures";
+import { paintSky, makeSkyTexture, makeCloudTexture } from "./textures";
 import { duskFactor, nightFactor, periodName } from "./period";
+import { Particles } from "./particles";
 import type { GameMode, PlayerStats } from "./types";
 
 export class Game {
@@ -26,6 +27,8 @@ export class Game {
   private clock = new THREE.Clock();
   private sky: THREE.Mesh;
   private skyTex: THREE.CanvasTexture;
+  private clouds: THREE.Mesh;
+  private cloudMat: THREE.MeshBasicMaterial;
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
   private neonM: THREE.PointLight;
@@ -41,8 +44,10 @@ export class Game {
   private rider = new Rider();
   private orders: OrderSystem;
   private hud = new Hud();
+  private particles = new Particles();
   private mode: GameMode = "title";
   private holding = false;
+  private wasHutong = false;
   private raining = false;
   private rainClock = 18;
   private minutes = 10 * 60 + 20;
@@ -61,6 +66,8 @@ export class Game {
     deliveries: 0,
   };
   private dlg: { who: string; text: string }[] = [];
+  private dlgFromStory = false;
+  private pendingStory: { who: string; text: string }[] | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.orders = new OrderSystem(this.track);
@@ -99,6 +106,21 @@ export class Game {
     this.sky.position.set(CITY_SPAN / 2, 0, CITY_SPAN / 2);
     this.scene.add(this.sky);
 
+    // 云层:第二层半球,贴 noise 软白团,缓慢旋转
+    this.cloudMat = new THREE.MeshBasicMaterial({
+      map: makeCloudTexture(),
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.BackSide,
+      fog: false,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    this.clouds = new THREE.Mesh(new THREE.SphereGeometry(1080, 24, 16), this.cloudMat);
+    this.clouds.position.set(CITY_SPAN / 2, 0, CITY_SPAN / 2);
+    this.scene.add(this.clouds);
+
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.42, 0.62);
@@ -107,6 +129,7 @@ export class Game {
 
     this.scene.add(this.track.group);
     this.scene.add(this.rider.group);
+    this.scene.add(this.particles.group);
     const boot = this.track.planTo({ i: 4, j: 1 }, { i: 4, j: 8 }, null, 0.4);
     this.rider.setRoute(boot);
 
@@ -129,6 +152,7 @@ export class Game {
     document.getElementById("result-ok")?.addEventListener("click", () => {
       this.hud.show("result", false);
       this.resultT = 0;
+      this.beginPendingStory();
     });
     document.getElementById("resume-btn")?.addEventListener("click", () => this.setPause(false));
     document.getElementById("mute-btn")?.addEventListener("click", () => this.toggleMute());
@@ -151,6 +175,7 @@ export class Game {
         tutorialDone: this.orders.tutorialDone,
         muted: this.audio.muted,
         minutes: this.minutes,
+        storyProgress: this.orders.storyProgress,
       }),
     );
   }
@@ -165,6 +190,7 @@ export class Game {
     this.stats.stamina = 100;
     this.stats.battery = 100;
     this.orders.tutorialDone = data.tutorialDone;
+    this.orders.storyProgress = { ...data.storyProgress };
     this.audio.muted = data.muted;
     this.minutes = data.minutes;
   }
@@ -199,9 +225,20 @@ export class Game {
       { who: "老马", text: `${this.stats.name}，车自己会拐弯。你左右躲开，空格跳、S 滑铲。` },
       { who: "老马", text: "单在手机上。别抢着跑，先看备注：龙叔那碗粥，放门口，别敲门。" },
     ];
+    this.dlgFromStory = false;
     this.mode = "dialogue";
     this.nextDialogue();
     this.audio.beep(520, 0.1, "sine", 0.04);
+  }
+
+  private beginPendingStory() {
+    if (!this.pendingStory?.length || this.mode === "dialogue") return;
+    this.dlg = this.pendingStory;
+    this.pendingStory = null;
+    this.dlgFromStory = true;
+    this.mode = "dialogue";
+    this.hud.show("result", false);
+    this.nextDialogue();
   }
 
   private toggleMute() {
@@ -230,8 +267,14 @@ export class Game {
       this.hud.show("dialogue", false);
       this.mode = "playing";
       this.orders.cooldown = 0;
-      this.audio.orderPing();
-      this.hud.toastMsg("手机亮了。接龙叔那单。");
+      if (this.dlgFromStory) {
+        this.dlgFromStory = false;
+        this.hud.toastMsg("常客剧情推进了");
+        this.persist();
+      } else {
+        this.audio.orderPing();
+        this.hud.toastMsg("手机亮了。接龙叔那单。");
+      }
       return;
     }
     this.hud.showDialogue(line.who, line.text);
@@ -309,9 +352,11 @@ export class Game {
     this.audio.success();
     const lines = CUSTOMER_LINES[result.customer];
     const quote = lines ? lines[Math.floor(Math.random() * lines.length)] : null;
-    this.hud.showResult(result.stars, result.lines, result.pay);
+    this.hud.showResult(result.stars, result.lines, result.pay, result.customer);
     this.resultT = 2.6;
     this.hud.toastMsg(quote ? `${result.customer}：${quote}` : `${"★".repeat(result.stars)}  +¥${result.pay}`);
+    this.particles.coin(this.rider.x, 1.4, this.rider.z);
+    this.pendingStory = result.storyTalk?.length ? result.storyTalk : null;
     this.persist();
   }
 
@@ -355,6 +400,11 @@ export class Game {
       this.stats.combo = 0;
       this.hud.hurt();
       this.hud.toastMsg("撞上了！餐品颠簸");
+      // 碰撞火花
+      const sm = this.rider.sample();
+      const sx = this.rider.x + (sm?.rx ?? 1) * obs.lateral;
+      const sz = this.rider.z + (sm?.rz ?? 0) * obs.lateral;
+      this.particles.spark(sx, 0.6, sz);
     }
 
     for (const g of this.track.gates) {
@@ -476,13 +526,18 @@ export class Game {
       if (this.mode === "playing") this.hud.toastMsg(this.raining ? "下雨了，路滑减速" : "雨停了");
     }
     this.applyAtmosphere();
+    this.track.setWet(this.raining ? 1 : 0);
     this.tickRain(dt);
     this.track.update(dt);
     this.tickSpeedLines();
+    this.particles.update(dt);
 
     if (this.resultT > 0) {
       this.resultT -= dt;
-      if (this.resultT <= 0) this.hud.show("result", false);
+      if (this.resultT <= 0) {
+        this.hud.show("result", false);
+        this.beginPendingStory();
+      }
     }
 
     if (this.mode === "playing") {
@@ -495,7 +550,21 @@ export class Game {
       const idle = !this.orders.active;
       const heavy = Boolean(this.holding && this.orders.active?.kind === "heavy");
       this.rider.update(dt, this.input, this.stats, heavy, this.raining, idle);
+      if (this.orders.active) {
+        const nowHutong = this.rider.inHutong;
+        if (nowHutong && !this.wasHutong) this.hud.toastMsg("拐进胡同 · 减速慢行");
+        this.wasHutong = nowHutong;
+      } else {
+        this.wasHutong = false;
+      }
       this.track.updateRibbon(this.rider.s);
+      // 落地尘土 + 漂移烟
+      if (this.rider.consumeLanding()) {
+        this.particles.dust(this.rider.x, 0.1, this.rider.z);
+      }
+      if (this.rider.speed > 18 && Math.abs(this.input.axis().x) > 0.6 && !this.rider.jumping) {
+        if (Math.random() < 0.4) this.particles.smoke(this.rider.x, 0.2, this.rider.z);
+      }
       if (!idle) {
         this.tickOrderBeats();
         this.collide();
@@ -525,6 +594,9 @@ export class Game {
       this.rider.followCamera(this.camera, dt);
       this.sky.position.x = this.camera.position.x;
       this.sky.position.z = this.camera.position.z;
+      this.clouds.position.x = this.camera.position.x;
+      this.clouds.position.z = this.camera.position.z;
+      this.clouds.rotation.y += dt * 0.008;
     }
     this.audio.engine(this.mode === "playing" ? this.rider.speed : 0);
     this.hud.setClock(this.minutes, this.raining);
@@ -537,6 +609,8 @@ export class Game {
     let prompt: string | null = null;
     if (this.mode === "playing" && !this.orders.active) {
       prompt = this.orders.offers.length ? "看手机接单 · 按 1 / 2 / 3" : "听单中…";
+    } else if (this.mode === "playing" && this.rider.inHutong) {
+      prompt = "胡同窄道 · 小心墙根";
     } else if (this.mode === "playing" && gate && gate.s - this.rider.s < 18) {
       prompt = gate.kind === "pickup" ? "前方取餐" : "前方送达";
     } else if (this.mode === "playing" && obs) {
@@ -618,6 +692,9 @@ export class Game {
       this.lastSkyH = hour;
       this.lastSkyRain = this.raining;
     }
+    // 云层:白天显眼,夜晚淡化,雨天加浓
+    const cloudOpacity = (0.55 * day + 0.08 * night) * (this.raining ? 1.4 : 1);
+    this.cloudMat.opacity = Math.min(0.7, cloudOpacity);
 
     if (name !== this.lastPeriod) {
       if (this.lastPeriod && this.mode === "playing") {

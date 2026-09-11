@@ -11,6 +11,20 @@ export function streetBetween(a: GridNode, b: GridNode) {
   return H_STREETS[a.j] ?? "无名路";
 }
 
+/** 地块 (bi,bj) 是否有东西向胡同（确定性，老城感：约 3/4 地块有） */
+export function hasHutong(bi: number, bj: number) {
+  if (bi < 0 || bj < 0 || bi >= GRID_N - 1 || bj >= GRID_N - 1) return false;
+  // 市中心高楼区少开胡同，外围/老街坊多
+  const downtown = Math.hypot(bi - (GRID_N - 2) / 2, bj - (GRID_N - 2) / 2);
+  if (downtown < 3.2) return (bi * 5 + bj * 11) % 7 === 0;
+  return (bi * 7 + bj * 13) % 5 !== 0;
+}
+
+export function hutongName(bi: number, bj: number) {
+  const names = ["槐树", "烟袋", "铃铛", "雨儿", "帽儿", "菊儿", "南锣", "东棉花", "西四北", "砖塔"];
+  return `${names[(bi * 3 + bj) % names.length]}胡同`;
+}
+
 export class Route {
   samples: Sample[] = [];
   turns: NavTurn[] = [];
@@ -48,6 +62,7 @@ export class Route {
       rz: a.rz + (b.rz - a.rz) * u,
       yaw: a.yaw + shortAngle(b.yaw - a.yaw) * u,
       s: t,
+      hutong: u < 0.5 ? a.hutong : b.hutong,
     };
   }
 
@@ -67,7 +82,119 @@ function shortAngle(a: number) {
   return a;
 }
 
-function astar(from: GridNode, to: GridNode): GridNode[] {
+type NavPt = { x: number; z: number; hutong?: boolean; label?: string };
+
+/** 扩展图节点：路口 m:i,j ；胡同口 p:streetI:blockJ（竖街中点） */
+function astarWithHutong(from: GridNode, to: GridNode): NavPt[] {
+  type Key = string;
+  const main = (i: number, j: number): Key => `m:${i},${j}`;
+  const portal = (si: number, bj: number): Key => `p:${si},${bj}`;
+  const parse = (k: Key): NavPt => {
+    if (k.startsWith("m:")) {
+      const [i, j] = k.slice(2).split(",").map(Number);
+      return { x: i! * CELL, z: j! * CELL };
+    }
+    const [si, bj] = k.slice(2).split(",").map(Number);
+    return { x: si! * CELL, z: (bj! + 0.5) * CELL, hutong: false, label: "胡同口" };
+  };
+
+  const neighbors = (k: Key): { to: Key; cost: number; hutongEdge?: boolean; name?: string }[] => {
+    const out: { to: Key; cost: number; hutongEdge?: boolean; name?: string }[] = [];
+    if (k.startsWith("m:")) {
+      const [i, j] = k.slice(2).split(",").map(Number) as [number, number];
+      for (const [di, dj] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as const) {
+        const ni = i + di;
+        const nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= GRID_N || nj >= GRID_N) continue;
+        out.push({ to: main(ni, nj), cost: 1 });
+      }
+      // 竖街上的胡同口（上/下半段）
+      if (j < GRID_N - 1) out.push({ to: portal(i, j), cost: 0.48 });
+      if (j > 0) out.push({ to: portal(i, j - 1), cost: 0.48 });
+    } else {
+      const [si, bj] = k.slice(2).split(",").map(Number) as [number, number];
+      out.push({ to: main(si, bj), cost: 0.48 });
+      out.push({ to: main(si, bj + 1), cost: 0.48 });
+      // 东西穿胡同
+      if (si < GRID_N - 1 && hasHutong(si, bj)) {
+        out.push({ to: portal(si + 1, bj), cost: 0.62, hutongEdge: true, name: hutongName(si, bj) });
+      }
+      if (si > 0 && hasHutong(si - 1, bj)) {
+        out.push({ to: portal(si - 1, bj), cost: 0.62, hutongEdge: true, name: hutongName(si - 1, bj) });
+      }
+    }
+    return out;
+  };
+
+  const start = main(from.i, from.j);
+  const goal = main(to.i, to.j);
+  const open = [start];
+  const came = new Map<Key, Key>();
+  const gScore = new Map<Key, number>([[start, 0]]);
+  const edgeMeta = new Map<Key, { hutongEdge?: boolean; name?: string }>();
+  const hOf = (k: Key) => {
+    const p = parse(k);
+    const t = nodePos(to);
+    return (Math.abs(p.x - t.x) + Math.abs(p.z - t.z)) / CELL;
+  };
+
+  let guard = 0;
+  while (open.length && guard++ < 8000) {
+    open.sort((a, b) => (gScore.get(a) ?? 9e9) + hOf(a) - ((gScore.get(b) ?? 9e9) + hOf(b)));
+    const cur = open.shift()!;
+    if (cur === goal) break;
+    for (const nb of neighbors(cur)) {
+      const tentative = (gScore.get(cur) ?? 9e9) + nb.cost;
+      if (tentative < (gScore.get(nb.to) ?? 9e9)) {
+        came.set(nb.to, cur);
+        gScore.set(nb.to, tentative);
+        edgeMeta.set(nb.to, { hutongEdge: nb.hutongEdge, name: nb.name });
+        if (!open.includes(nb.to)) open.push(nb.to);
+      }
+    }
+  }
+
+  const keys: Key[] = [];
+  let k: Key | undefined = goal;
+  if (!came.has(goal) && goal !== start) {
+    // fallback 纯棋盘
+    return astarFallback(from, to).map((n) => ({ ...nodePos(n) }));
+  }
+  while (k) {
+    keys.push(k);
+    if (k === start) break;
+    k = came.get(k);
+  }
+  keys.reverse();
+
+  const pts: NavPt[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i]!;
+    const p = parse(key);
+    const meta = edgeMeta.get(key);
+    if (meta?.hutongEdge) {
+      p.hutong = true;
+      p.label = meta.name;
+    }
+    // 胡同边的两端点都标 hutong
+    if (i > 0) {
+      const prevMeta = edgeMeta.get(key);
+      if (prevMeta?.hutongEdge) {
+        pts[pts.length - 1]!.hutong = true;
+        p.hutong = true;
+      }
+    }
+    pts.push(p);
+  }
+  return pts;
+}
+
+function astarFallback(from: GridNode, to: GridNode): GridNode[] {
   const key = (n: GridNode) => `${n.i},${n.j}`;
   const start = key(from);
   const goal = key(to);
@@ -151,7 +278,7 @@ function smoothCorners(pts: { x: number; z: number }[], radius = 8.5) {
   return out;
 }
 
-function samplePoly(pts: { x: number; z: number }[], step = 1.15): Sample[] {
+function samplePoly(pts: { x: number; z: number; hutong?: boolean }[], step = 1.15): Sample[] {
   const samples: Sample[] = [];
   let s = 0;
   for (let i = 0; i < pts.length - 1; i++) {
@@ -164,6 +291,7 @@ function samplePoly(pts: { x: number; z: number }[], step = 1.15): Sample[] {
     const tx = dx / len;
     const tz = dz / len;
     const segs = Math.max(1, Math.round(len / step));
+    const hutong = Boolean(a.hutong && b.hutong);
     for (let k = 0; k < segs; k++) {
       const u = k / segs;
       const yaw = Math.atan2(tx, tz);
@@ -176,6 +304,7 @@ function samplePoly(pts: { x: number; z: number }[], step = 1.15): Sample[] {
         rz: -tx,
         yaw,
         s,
+        hutong,
       });
       s += len / segs;
     }
@@ -183,32 +312,39 @@ function samplePoly(pts: { x: number; z: number }[], step = 1.15): Sample[] {
   const last = pts[pts.length - 1]!;
   const prev = samples[samples.length - 1];
   if (prev) {
-    samples.push({ ...prev, x: last.x, z: last.z, s });
+    samples.push({ ...prev, x: last.x, z: last.z, s, hutong: last.hutong ?? prev.hutong });
   }
   return samples;
 }
 
-function turnsFromNodes(nodes: GridNode[], samples: Sample[]): NavTurn[] {
+function turnsFromPts(pts: NavPt[], samples: Sample[]): NavTurn[] {
   const turns: NavTurn[] = [];
   let sAcc = 0;
-  for (let i = 0; i < nodes.length - 1; i++) {
-    const a = nodePos(nodes[i]!);
-    const b = nodePos(nodes[i + 1]!);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
     const seg = Math.hypot(b.x - a.x, b.z - a.z);
     if (i >= 1) {
-      const p = nodes[i - 1]!;
-      const c = nodes[i]!;
-      const n = nodes[i + 1]!;
-      const inx = c.i - p.i;
-      const inz = c.j - p.j;
-      const outx = n.i - c.i;
-      const outz = n.j - c.j;
+      const p = pts[i - 1]!;
+      const c = pts[i]!;
+      const n = pts[i + 1]!;
+      const inx = c.x - p.x;
+      const inz = c.z - p.z;
+      const outx = n.x - c.x;
+      const outz = n.z - c.z;
       const cross = inx * outz - inz * outx;
-      if (cross !== 0) {
+      if (Math.abs(cross) > 1) {
+        const street =
+          c.hutong || n.hutong
+            ? c.label ?? n.label ?? "胡同"
+            : streetBetween(
+                { i: Math.round(c.x / CELL), j: Math.round(c.z / CELL) },
+                { i: Math.round(n.x / CELL), j: Math.round(n.z / CELL) },
+              );
         turns.push({
           s: sAcc,
           dir: cross < 0 ? "right" : "left",
-          street: streetBetween(c, n),
+          street,
         });
       }
     }
@@ -234,15 +370,40 @@ function nearestAlong(route: Route, dest: GridNode) {
   return best;
 }
 
-/** Single-leg path: current position → one destination (取餐或送达). */
+/** Single-leg path: current position → one destination（可抄胡同近路）. */
 export function buildLeg(from: GridNode, dest: GridNode): Route {
-  let nodes = astar(from, dest);
-  if (nodes.length < 2) {
+  let pts = astarWithHutong(from, dest);
+  if (pts.length < 2) {
     const j = dest.j < GRID_N - 1 ? dest.j + 1 : Math.max(0, dest.j - 1);
-    nodes = [from, { i: dest.i, j }];
+    pts = [nodePos(from), nodePos({ i: dest.i, j })];
   }
-  const raw = nodes.map(nodePos);
-  const smooth = smoothCorners(raw);
+  // 胡同段用更小圆角，体现尺度断崖
+  const smooth: { x: number; z: number; hutong?: boolean }[] = [];
+  const rawSmooth = smoothCorners(
+    pts.map((p) => ({ x: p.x, z: p.z })),
+    pts.some((p) => p.hutong) ? 4.2 : 8.5,
+  );
+  // 把 hutong 标记投影回平滑点
+  for (const sp of rawSmooth) {
+    let hutong = false;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      if (!a.hutong || !b.hutong) continue;
+      const d =
+        Math.abs((b.z - a.z) * sp.x - (b.x - a.x) * sp.z + b.x * a.z - b.z * a.x) /
+        (Math.hypot(b.x - a.x, b.z - a.z) || 1);
+      const along =
+        ((sp.x - a.x) * (b.x - a.x) + (sp.z - a.z) * (b.z - a.z)) /
+        ((b.x - a.x) ** 2 + (b.z - a.z) ** 2 || 1);
+      if (d < 6 && along > -0.05 && along < 1.05) {
+        hutong = true;
+        break;
+      }
+    }
+    smooth.push({ ...sp, hutong });
+  }
+
   const route = new Route();
   route.samples = samplePoly(smooth);
   if (!route.samples.length) {
@@ -251,7 +412,7 @@ export function buildLeg(from: GridNode, dest: GridNode): Route {
   }
   route.length = route.samples[route.samples.length - 1]?.s ?? 0;
   route.points = smooth.length ? smooth : [nodePos(from)];
-  route.turns = turnsFromNodes(nodes, route.samples);
+  route.turns = turnsFromPts(pts, route.samples);
   const destS = nearestAlong(route, dest);
   route.pickupS = destS;
   route.dropoffS = destS;
@@ -275,6 +436,7 @@ function extendRoute(route: Route, extra: number) {
       rz: last.rz,
       yaw: last.yaw,
       s,
+      hutong: last.hutong,
     });
   }
   route.length = route.samples[route.samples.length - 1]?.s ?? route.length;
