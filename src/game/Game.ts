@@ -66,6 +66,8 @@ export class Game {
     deliveries: 0,
   };
   private dlg: { who: string; text: string }[] = [];
+  private dlgFromStory = false;
+  private pendingStory: { who: string; text: string }[] | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.orders = new OrderSystem(this.track);
@@ -150,6 +152,7 @@ export class Game {
     document.getElementById("result-ok")?.addEventListener("click", () => {
       this.hud.show("result", false);
       this.resultT = 0;
+      this.beginPendingStory();
     });
     document.getElementById("resume-btn")?.addEventListener("click", () => this.setPause(false));
     document.getElementById("mute-btn")?.addEventListener("click", () => this.toggleMute());
@@ -172,6 +175,7 @@ export class Game {
         tutorialDone: this.orders.tutorialDone,
         muted: this.audio.muted,
         minutes: this.minutes,
+        storyProgress: this.orders.storyProgress,
       }),
     );
   }
@@ -186,6 +190,7 @@ export class Game {
     this.stats.stamina = 100;
     this.stats.battery = 100;
     this.orders.tutorialDone = data.tutorialDone;
+    this.orders.storyProgress = { ...data.storyProgress };
     this.audio.muted = data.muted;
     this.minutes = data.minutes;
   }
@@ -220,9 +225,20 @@ export class Game {
       { who: "老马", text: `${this.stats.name}，车自己会拐弯。你左右躲开，空格跳、S 滑铲。` },
       { who: "老马", text: "单在手机上。别抢着跑，先看备注：龙叔那碗粥，放门口，别敲门。" },
     ];
+    this.dlgFromStory = false;
     this.mode = "dialogue";
     this.nextDialogue();
     this.audio.beep(520, 0.1, "sine", 0.04);
+  }
+
+  private beginPendingStory() {
+    if (!this.pendingStory?.length || this.mode === "dialogue") return;
+    this.dlg = this.pendingStory;
+    this.pendingStory = null;
+    this.dlgFromStory = true;
+    this.mode = "dialogue";
+    this.hud.show("result", false);
+    this.nextDialogue();
   }
 
   private toggleMute() {
@@ -251,8 +267,14 @@ export class Game {
       this.hud.show("dialogue", false);
       this.mode = "playing";
       this.orders.cooldown = 0;
-      this.audio.orderPing();
-      this.hud.toastMsg("手机亮了。接龙叔那单。");
+      if (this.dlgFromStory) {
+        this.dlgFromStory = false;
+        this.hud.toastMsg("常客剧情推进了");
+        this.persist();
+      } else {
+        this.audio.orderPing();
+        this.hud.toastMsg("手机亮了。接龙叔那单。");
+      }
       return;
     }
     this.hud.showDialogue(line.who, line.text);
@@ -333,8 +355,8 @@ export class Game {
     this.hud.showResult(result.stars, result.lines, result.pay, result.customer);
     this.resultT = 2.6;
     this.hud.toastMsg(quote ? `${result.customer}：${quote}` : `${"★".repeat(result.stars)}  +¥${result.pay}`);
-    // 送达礼花
     this.particles.coin(this.rider.x, 1.4, this.rider.z);
+    this.pendingStory = result.storyTalk?.length ? result.storyTalk : null;
     this.persist();
   }
 
@@ -512,7 +534,10 @@ export class Game {
 
     if (this.resultT > 0) {
       this.resultT -= dt;
-      if (this.resultT <= 0) this.hud.show("result", false);
+      if (this.resultT <= 0) {
+        this.hud.show("result", false);
+        this.beginPendingStory();
+      }
     }
 
     if (this.mode === "playing") {

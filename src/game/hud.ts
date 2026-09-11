@@ -148,10 +148,11 @@ export class Hud {
     if (active) return;
     offers.forEach((o, i) => {
       const card = document.createElement("div");
-      card.className = `offer ${o.kind === "urgent" ? "urgent" : ""}`;
+      card.className = `offer ${o.kind === "urgent" ? "urgent" : ""} ${o.storyArc ? "story" : ""}`;
       card.innerHTML = `
-        <div class="offer-top"><span>${kindLabel(o.kind)} · ${o.food}</span><b>¥${o.pay}</b></div>
+        <div class="offer-top"><span>${o.storyArc ? "常客剧情" : kindLabel(o.kind)} · ${o.food}</span><b>¥${o.pay}</b></div>
         <div class="meta">① ${o.restaurantName} 取餐 → ② ${o.customerName}</div>
+        ${o.offerHint ? `<div class="story-tag">${o.offerHint}</div>` : ""}
         ${o.note ? `<div class="note">备注：${o.note}</div>` : ""}
         <div class="offer-bot"><span>${Math.max(1, Math.ceil(o.expire))}s 后过期</span><button type="button">接单 ${i + 1}</button></div>
       `;

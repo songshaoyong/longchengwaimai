@@ -1,4 +1,12 @@
 import { CUSTOMERS, CUSTOMER_LINES, CUSTOMER_NOTES, FOODS, RANK_THRESHOLDS, SHOP_LINES } from "../data/catalog";
+import {
+  STORY_ARCS,
+  defaultStoryProgress,
+  pickAvailableStory,
+  type StoryArcId,
+  type StoryBeat,
+  type StoryProgress,
+} from "../data/stories";
 import type { Track } from "./city";
 import { pick } from "./rng";
 import type { Order, OrderKind, PlayerStats } from "./types";
@@ -10,6 +18,9 @@ export class OrderSystem {
   active: Order | null = null;
   cooldown = 0.8;
   tutorialDone = false;
+  storyProgress: StoryProgress = defaultStoryProgress();
+  /** 本波是否已塞过剧情单，避免同一刷单窗口刷两张 */
+  private storyOfferedThisWave = false;
 
   constructor(private track: Track) {}
 
@@ -27,9 +38,18 @@ export class OrderSystem {
     this.cooldown -= dt;
     const want = this.tutorialDone ? 3 : 1;
     if (this.cooldown <= 0 && this.offers.length < want) {
-      if (!this.tutorialDone) this.offers.push(this.tutorialOrder());
-      else {
+      if (!this.tutorialDone) {
+        this.offers.push(this.tutorialOrder());
+      } else {
+        this.storyOfferedThisWave = false;
         const used = new Set(this.offers.map((o) => o.customerName + o.restaurantName));
+        // 优先塞一张常客剧情单
+        const story = this.tryStoryOrder(stats);
+        if (story) {
+          this.offers.push(story);
+          used.add(story.customerName + story.restaurantName);
+          this.storyOfferedThisWave = true;
+        }
         let guard = 0;
         while (this.offers.length < want && guard++ < 8) {
           const next = this.randomOrder(stats);
@@ -56,9 +76,10 @@ export class OrderSystem {
     this.offers = [];
     this.tutorialDone = true;
     this.active.phase = "toPickup";
-    this.active.chats = [
-      { from: this.active.restaurantName, text: "已接单，厨房在做。" },
-    ];
+    this.active.chats = [{ from: this.active.restaurantName, text: "已接单，厨房在做。" }];
+    if (this.active.offerHint) {
+      this.active.chats.push({ from: "龙城外卖", text: this.active.offerHint });
+    }
     return this.active;
   }
 
@@ -86,6 +107,7 @@ export class OrderSystem {
       pay: 0,
       food: order.food,
       customer: order.customerName,
+      storyTalk: null as { who: string; text: string }[] | null,
     };
   }
 
@@ -102,12 +124,19 @@ export class OrderSystem {
     const stars = Math.max(1, Math.min(5, Math.round(avg)));
     const tip = stars >= 5 ? Math.round(order.pay * (0.08 + stats.combo * 0.015)) : 0;
     const ontimeBonus = onTime ? Math.round(order.pay * 0.15) : -Math.round(order.pay * 0.2);
-    const total = Math.max(4, order.pay + ontimeBonus + tip);
+    const storyBonus = order.storyArc ? 6 : 0;
+    const total = Math.max(4, order.pay + ontimeBonus + tip + storyBonus);
     stats.money += total;
     stats.deliveries += 1;
     if (stars >= 4) stats.goodReviews += 1;
+
+    let storyTalk: { who: string; text: string }[] | null = null;
+    if (order.storyArc && order.storyBeatId) {
+      storyTalk = this.advanceStory(order.storyArc, order.storyBeatId);
+    }
+
     this.active = null;
-    this.cooldown = 2.4;
+    this.cooldown = storyTalk ? 0.8 : 2.4;
     return {
       stars,
       lines: [
@@ -116,11 +145,23 @@ export class OrderSystem {
         `跑酷连击 x${stats.combo}`,
         onTime ? "准时奖励已计入" : "超时扣减已计入",
         tip ? `小费 +¥${tip}` : "无小费",
-      ],
+        storyBonus ? `常客心意 +¥${storyBonus}` : "",
+      ].filter(Boolean),
       pay: total,
       food: order.food,
       customer: order.customerName,
+      storyTalk,
     };
+  }
+
+  private advanceStory(arcId: StoryArcId, beatId: string) {
+    const arc = STORY_ARCS.find((a) => a.id === arcId);
+    if (!arc) return null;
+    const idx = this.storyProgress[arcId] ?? 0;
+    const beat = arc.beats[idx];
+    if (!beat || beat.id !== beatId) return null;
+    this.storyProgress[arcId] = idx + 1;
+    return beat.afterTalk;
   }
 
   rank(stats: PlayerStats) {
@@ -136,7 +177,18 @@ export class OrderSystem {
     return { current, next };
   }
 
+  private tryStoryOrder(stats: PlayerStats): Order | null {
+    if (this.storyOfferedThisWave) return null;
+    // 约 55% 概率尝试塞剧情单（有可解锁时），避免每波都是剧情
+    if (Math.random() > 0.55 && stats.deliveries > 0) return null;
+    const hit = pickAvailableStory(this.storyProgress, stats.deliveries);
+    if (!hit) return null;
+    return this.fromBeat(hit.arcId, hit.beat);
+  }
+
   private tutorialOrder(): Order {
+    const hit = pickAvailableStory(this.storyProgress, 0);
+    if (hit) return this.fromBeat(hit.arcId, hit.beat, 99);
     const rest = this.track.restaurants[0]!;
     const cust = this.track.customers[0]!;
     return this.make(
@@ -150,6 +202,30 @@ export class OrderSystem {
       cust.node,
       99,
     );
+  }
+
+  private fromBeat(arcId: StoryArcId, beat: StoryBeat, expire = 16): Order {
+    const rest =
+      this.track.restaurants.find((r) => r.name === beat.restaurant) ??
+      this.track.restaurants[0]!;
+    const cust =
+      this.track.customers.find((c) => c.name === beat.dropoff) ?? this.track.customers[0]!;
+    const order = this.make(
+      beat.kind,
+      beat.food,
+      rest.name,
+      beat.customer,
+      cust.name,
+      beat.note,
+      rest.node,
+      cust.node,
+      expire,
+    );
+    order.storyArc = arcId;
+    order.storyBeatId = beat.id;
+    order.offerHint = beat.offerHint;
+    order.pay = Math.round(order.pay * 1.15);
+    return order;
   }
 
   private randomOrder(stats: PlayerStats): Order {

@@ -61,12 +61,16 @@ export type Order = {
   story?: string;
   note?: string;
   shopLine?: string;
+  offerHint?: string;
   phase: "offer" | "toPickup" | "toDropoff";
   expire: number;
   chats: { from: string; text: string }[];
   pingedShop: boolean;
   pingedNear: boolean;
   pingedLate: boolean;
+  /** 常客剧情：弧 id + beat id */
+  storyArc?: "longshu" | "ma" | "lin";
+  storyBeatId?: string;
 };
 
 export type PlayerStats = {

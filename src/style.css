@@ -597,6 +597,17 @@ body,
   border-color: rgba(255, 45, 149, 0.45);
 }
 
+.offer.story {
+  border-color: rgba(255, 178, 71, 0.65);
+  background: rgba(255, 178, 71, 0.08);
+}
+
+.offer .story-tag {
+  color: #ffb247;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
 .offer-top,
 .offer-bot {
   display: flex;
